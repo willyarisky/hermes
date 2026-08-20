@@ -46,12 +46,17 @@ Run the included installation script on your remote server:
 ```bash
 # Linux / macOS Server
 curl -fsSL https://raw.githubusercontent.com/willyarisky/hermes/refs/heads/main/install.sh | bash
-# Or run locally from cloned repo:
-./install.sh
-
-# Windows Server (PowerShell)
-.\install.ps1
 ```
+
+```powershell
+# Windows Server (PowerShell)
+irm https://raw.githubusercontent.com/willyarisky/hermes/refs/heads/main/install.ps1 | iex
+```
+
+Both installers download the plugin themselves, so they work when piped straight
+from GitHub. From a cloned repo, run `./install.sh` (or `.\install.ps1`) instead and
+the local checkout is used. Set `HERMES_HOME` to install somewhere other than
+`~/.hermes`.
 
 ### Option 3: Pip / Virtual Environment
 
