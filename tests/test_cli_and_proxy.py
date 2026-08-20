@@ -9,6 +9,12 @@ from unittest.mock import MagicMock, patch
 
 from agy_auth_adapter.cli import build_parser, main as cli_main
 from agy_auth_adapter.daemon import DaemonManager
+from agy_auth_adapter.utils import (
+    DEFAULT_PROXY_PORT,
+    find_free_port,
+    get_configured_proxy_port,
+    get_default_proxy_port,
+)
 from agy_auth_adapter.provider import AGYModelProvider
 from agy_auth_adapter.proxy import AGYProxyHandler
 
@@ -145,6 +151,57 @@ class TestPortConflictDetection(unittest.TestCase):
             st = self.mgr.status(port=8080)
         self.assertTrue(st["port_conflict"])
         self.assertFalse(st["running"])
+
+
+class TestProxyPortResolution(unittest.TestCase):
+    """The bridge port must not silently drift from what Hermes is configured to call."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.hermes_home = Path(self.temp_dir.name) / ".hermes"
+        self.hermes_home.mkdir(parents=True, exist_ok=True)
+        self.env = patch.dict(
+            os.environ, {"HERMES_HOME": str(self.hermes_home), "AGY_PROXY_PORT": ""}
+        )
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.temp_dir.cleanup()
+
+    def _write_config(self, port):
+        (self.hermes_home / "config.yaml").write_text(
+            "providers:\n"
+            "  agy-proxy:\n"
+            f"    base_url: http://127.0.0.1:{port}/v1\n",
+            encoding="utf-8",
+        )
+
+    def test_packaged_default_is_used_without_config(self):
+        self.assertEqual(get_default_proxy_port(), DEFAULT_PROXY_PORT)
+        self.assertNotEqual(DEFAULT_PROXY_PORT, 8080)
+
+    def test_existing_config_port_wins_over_the_packaged_default(self):
+        self._write_config(8080)
+        self.assertEqual(get_configured_proxy_port(), 8080)
+        self.assertEqual(get_default_proxy_port(), 8080)
+
+    def test_environment_override_wins_over_config(self):
+        self._write_config(8080)
+        with patch.dict(os.environ, {"AGY_PROXY_PORT": "9100"}):
+            self.assertEqual(get_default_proxy_port(), 9100)
+
+    def test_invalid_environment_override_is_ignored(self):
+        with patch.dict(os.environ, {"AGY_PROXY_PORT": "not-a-port"}):
+            self.assertEqual(get_default_proxy_port(), DEFAULT_PROXY_PORT)
+
+    def test_find_free_port_skips_listeners(self):
+        def fake_connect(addr, timeout=None):
+            if addr[1] < DEFAULT_PROXY_PORT + 2:
+                return MagicMock()
+            raise OSError
+        with patch("socket.create_connection", side_effect=fake_connect):
+            self.assertEqual(find_free_port(DEFAULT_PROXY_PORT), DEFAULT_PROXY_PORT + 2)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 from agy_auth_adapter.auth import AGYAuthManager
 from agy_auth_adapter.provider import DEFAULT_MODELS, AGYModelProvider
+from agy_auth_adapter.utils import DEFAULT_PROXY_HOST, get_default_proxy_port
 
 logger = logging.getLogger("agy_auth_adapter.proxy")
 
@@ -132,11 +133,13 @@ class AGYProxyHandler(http.server.BaseHTTPRequestHandler):
 
 
 def run_proxy_server(
-    host: str = "127.0.0.1",
-    port: int = 8080,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
     auth_manager: Optional[AGYAuthManager] = None,
 ) -> None:
     """Starts the OpenAI-compatible HTTP proxy server."""
+    host = host or DEFAULT_PROXY_HOST
+    port = port or get_default_proxy_port()
     mgr = auth_manager or AGYAuthManager()
     AGYProxyHandler.auth_manager = mgr
     AGYProxyHandler.provider = AGYModelProvider(mgr)

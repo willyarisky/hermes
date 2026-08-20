@@ -11,7 +11,7 @@ model:
 providers:
   agy-proxy:
     # URL where 'hermes agy proxy' runs
-    base_url: http://127.0.0.1:8080/v1
+    base_url: http://127.0.0.1:28080/v1
     api_key: antigravity-local-auth
 
 # 3. Enabled Hermes Plugins

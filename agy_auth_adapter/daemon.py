@@ -13,7 +13,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from agy_auth_adapter.utils import get_hermes_home, safe_read_json, safe_write_json
+from agy_auth_adapter.utils import (
+    DEFAULT_PROXY_HOST,
+    get_default_proxy_port,
+    get_hermes_home,
+    safe_read_json,
+    safe_write_json,
+)
 
 logger = logging.getLogger("agy_auth_adapter.daemon")
 
@@ -24,15 +30,15 @@ class DaemonManager:
     def __init__(
         self,
         hermes_home: Optional[Path] = None,
-        default_port: int = 8080,
-        default_host: str = "127.0.0.1",
+        default_port: Optional[int] = None,
+        default_host: Optional[str] = None,
     ):
         self.hermes_home = hermes_home or get_hermes_home()
         self.pid_file = self.hermes_home / "agy_proxy.pid"
         self.logs_dir = self.hermes_home / "logs"
         self.log_file = self.logs_dir / "agy_proxy.log"
-        self.default_port = default_port
-        self.default_host = default_host
+        self.default_port = default_port or get_default_proxy_port()
+        self.default_host = default_host or DEFAULT_PROXY_HOST
 
     def is_healthy(self, host: Optional[str] = None, port: Optional[int] = None, timeout: float = 1.0) -> bool:
         """Checks if the proxy server is running and responding on /health."""

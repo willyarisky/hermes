@@ -289,7 +289,7 @@ model:
 
 providers:
   agy-proxy:
-    base_url: http://127.0.0.1:8080/v1
+    base_url: http://127.0.0.1:28080/v1
     api_key: antigravity-local-auth
 
 plugins:
@@ -376,9 +376,36 @@ hermes/
 
 ---
 
+## 🔀 Bridge Port & Daemon
+
+The local OpenAI-compatible bridge listens on **`127.0.0.1:28080`** by default.
+It is deliberately not `8080` — that port is usually claimed by a web server or
+app runtime, and whatever owns it answers Hermes' model requests with its own
+404 page instead of completions. `28080` also sits below the Linux ephemeral
+range (32768+), so a transient outbound connection cannot take it either.
+
+Resolution order for the port, highest first:
+
+1. `--port` on the command (`hermes agy daemon start --port 9100`)
+2. `AGY_PROXY_PORT` in the environment
+3. `providers.agy-proxy.base_url` in `~/.hermes/config.yaml`
+4. the packaged default, `28080`
+
+Because an existing `config.yaml` wins over the default, upgrading does **not**
+move a running setup by itself — the CLI keeps reporting on whatever endpoint
+Hermes is actually calling. To move off a busy port:
+
+```bash
+hermes agy setup --port 28080        # rewrites providers.agy-proxy.base_url
+hermes agy daemon restart --port 28080
+hermes agy daemon status
+```
+
+---
+
 ## 🩺 Troubleshooting
 
-### `HTTP 404` from `http://127.0.0.1:8080/v1` (HTML error page)
+### `HTTP 404` from the bridge endpoint (HTML error page)
 
 Hermes is reaching *something* on that port, but not the AGY bridge — an HTML 404
 means a web server (nginx, Apache, a site, another app) owns the port. Check who
@@ -386,8 +413,8 @@ is listening and where the bridge stands:
 
 ```bash
 hermes agy daemon status          # says "PORT IN USE by another service" on a conflict
-ss -tlnp | grep :8080             # or: lsof -i :8080
-curl -s http://127.0.0.1:8080/health   # the AGY bridge answers with JSON
+ss -tlnp | grep :28080            # or: lsof -i :28080
+curl -s http://127.0.0.1:28080/health  # the AGY bridge answers with JSON
 ```
 
 Then either free the port, or move the bridge and repoint Hermes at it:

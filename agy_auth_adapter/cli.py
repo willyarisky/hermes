@@ -13,7 +13,16 @@ from agy_auth_adapter.auth import AGYAuthManager
 from agy_auth_adapter.daemon import DaemonManager
 from agy_auth_adapter.provider import DEFAULT_MODELS
 from agy_auth_adapter.proxy import run_proxy_server
-from agy_auth_adapter.utils import get_hermes_home, safe_read_json, safe_write_json, setup_logger
+from agy_auth_adapter.utils import (
+    DEFAULT_PROXY_HOST,
+    DEFAULT_PROXY_PORT,
+    find_free_port,
+    get_default_proxy_port,
+    get_hermes_home,
+    safe_read_json,
+    safe_write_json,
+    setup_logger,
+)
 
 logger = logging.getLogger("agy_auth_adapter.cli")
 
@@ -294,6 +303,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
         print("[SUCCESS] ~/.hermes/config.yaml updated with AGY provider settings!")
 
         if DaemonManager().probe_port(port=args.port) == "foreign":
+            suggestion = find_free_port(DEFAULT_PROXY_PORT)
             print("")
             print(
                 f"[WARNING] Port {args.port} is already in use by another service."
@@ -302,7 +312,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 "          Hermes would send model requests to it and get 404s back."
             )
             print(
-                "          Re-run with a free port, e.g.: hermes agy setup --port 8090"
+                f"          Re-run on a free port:  hermes agy setup --port {suggestion}"
             )
     except ImportError:
         # Fallback to simple snippet printing
@@ -339,6 +349,7 @@ def add_agy_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentPar
     Used both by the standalone CLI and by the Hermes plugin hook, which hands
     us the argparse subparser it created for 'hermes agy'.
     """
+    _DEFAULT_PORT = get_default_proxy_port()
     parser.set_defaults(_agy_parser=parser)
     subparsers = parser.add_subparsers(dest="agy_command", help="AGY command to execute")
 
@@ -387,8 +398,8 @@ def add_agy_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentPar
 
     # proxy
     proxy_parser = subparsers.add_parser("proxy", help="Run local OpenAI-compatible bridge proxy")
-    proxy_parser.add_argument("--host", type=str, default="127.0.0.1", help="Host interface (default: 127.0.0.1)")
-    proxy_parser.add_argument("--port", type=int, default=8080, help="Proxy port (default: 8080)")
+    proxy_parser.add_argument("--host", type=str, default=DEFAULT_PROXY_HOST, help=f"Host interface (default: {DEFAULT_PROXY_HOST})")
+    proxy_parser.add_argument("--port", type=int, default=_DEFAULT_PORT, help=f"Proxy port (default: {_DEFAULT_PORT})")
     proxy_parser.add_argument("--daemon", "-d", action="store_true", help="Run proxy detached in background")
     proxy_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
 
@@ -399,13 +410,13 @@ def add_agy_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentPar
         choices=["start", "stop", "restart", "status"],
         help="Action to perform on background daemon",
     )
-    daemon_parser.add_argument("--host", type=str, default="127.0.0.1", help="Host interface (default: 127.0.0.1)")
-    daemon_parser.add_argument("--port", type=int, default=8080, help="Proxy port (default: 8080)")
+    daemon_parser.add_argument("--host", type=str, default=DEFAULT_PROXY_HOST, help=f"Host interface (default: {DEFAULT_PROXY_HOST})")
+    daemon_parser.add_argument("--port", type=int, default=_DEFAULT_PORT, help=f"Proxy port (default: {_DEFAULT_PORT})")
     daemon_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose debug logging")
 
     # setup
     setup_parser = subparsers.add_parser("setup", help="Auto-configure Hermes config.yaml for AGY")
-    setup_parser.add_argument("--port", type=int, default=8080, help="Proxy bridge port (default: 8080)")
+    setup_parser.add_argument("--port", type=int, default=_DEFAULT_PORT, help=f"Proxy bridge port (default: {_DEFAULT_PORT})")
     setup_parser.add_argument(
         "--model",
         type=str,

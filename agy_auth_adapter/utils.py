@@ -5,11 +5,88 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("agy_auth_adapter")
+
+# Default port for the local OpenAI-compatible bridge. Deliberately not 8080:
+# that port is commonly taken by web servers and app runtimes, and whatever owns
+# it answers Hermes' model requests with its own 404 instead of completions.
+# 28080 sits below the Linux ephemeral range (32768+) so transient outbound
+# connections cannot claim it either. Override with AGY_PROXY_PORT.
+DEFAULT_PROXY_PORT = 28080
+DEFAULT_PROXY_HOST = "127.0.0.1"
+
+
+def get_configured_proxy_port() -> Optional[int]:
+    """Reads the bridge port Hermes is actually configured to call.
+
+    Looks at ``providers.agy-proxy.base_url`` in ``~/.hermes/config.yaml`` so the
+    CLI reports on the same endpoint Hermes uses, even when that config predates
+    a change of the default port. Returns None when unset or unreadable.
+    """
+    config_yaml = get_hermes_home() / "config.yaml"
+    try:
+        raw = config_yaml.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    base_url = ""
+    try:
+        import yaml
+
+        cfg = yaml.safe_load(raw) or {}
+        base_url = (
+            cfg.get("providers", {}).get("agy-proxy", {}).get("base_url", "") or ""
+        )
+    except Exception:
+        # PyYAML missing or the file is malformed — fall back to a plain scan.
+        match = re.search(r"base_url:\s*(\S+)", raw)
+        base_url = match.group(1) if match else ""
+
+    match = re.search(r":(\d{1,5})(?:/|$)", str(base_url))
+    if not match:
+        return None
+    port = int(match.group(1))
+    return port if 1 <= port <= 65535 else None
+
+
+def get_default_proxy_port() -> int:
+    """Returns the bridge port: AGY_PROXY_PORT, then config.yaml, then the default."""
+    raw = os.environ.get("AGY_PROXY_PORT", "").strip()
+    if raw:
+        try:
+            port = int(raw)
+            if 1 <= port <= 65535:
+                return port
+            logger.warning("AGY_PROXY_PORT=%s is out of range; ignoring", raw)
+        except ValueError:
+            logger.warning("AGY_PROXY_PORT=%s is not a number; ignoring", raw)
+
+    return get_configured_proxy_port() or DEFAULT_PROXY_PORT
+
+
+def find_free_port(preferred: Optional[int] = None, host: Optional[str] = None) -> int:
+    """Returns the first port nothing is listening on, starting at *preferred*.
+
+    Used to suggest a concrete alternative when the configured bridge port is
+    already taken. Scans a small window and falls back to *preferred* if every
+    candidate is busy.
+    """
+    import socket
+
+    target_host = host or DEFAULT_PROXY_HOST
+    start = preferred or DEFAULT_PROXY_PORT
+    for candidate in range(start, min(start + 20, 65536)):
+        try:
+            with socket.create_connection((target_host, candidate), timeout=0.4):
+                continue  # someone is listening — try the next one
+        except OSError:
+            return candidate
+    return start
 
 
 def setup_logger(verbose: bool = False) -> logging.Logger:

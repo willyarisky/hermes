@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 Environment="HERMES_HOME=%h/.hermes"
-ExecStart=%h/.hermes/plugins/agy-auth-adapter/venv/bin/python -m agy_auth_adapter.cli proxy --host 127.0.0.1 --port 8080
+ExecStart=%h/.hermes/plugins/agy-auth-adapter/venv/bin/python -m agy_auth_adapter.cli proxy --host 127.0.0.1 --port 28080
 Restart=always
 RestartSec=5
 StandardOutput=append:%h/.hermes/logs/agy_proxy.log
