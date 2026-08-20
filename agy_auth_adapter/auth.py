@@ -55,11 +55,14 @@ class AGYAuthManager:
         self.gemini_home = gemini_home or get_gemini_home()
         self.token_file = self.hermes_home / ".antigravity_oauth.json"
         self._cached_creds: Optional[AuthCredentials] = None
+        self._last_issue: Optional[str] = None
 
     def get_credentials(self, force_refresh: bool = False) -> Optional[AuthCredentials]:
         """Resolves and returns valid credentials from the priority hierarchy."""
         if self._cached_creds and not force_refresh and not self._cached_creds.is_expired:
             return self._cached_creds
+
+        self._last_issue = None
 
         # 1. Check Environment Variables
         env_token = (
@@ -75,48 +78,38 @@ class AGYAuthManager:
             self._cached_creds = creds
             return creds
 
-        # 2. Check Hermes Profile OAuth file
-        file_creds = self._load_from_token_file()
-        if file_creds:
-            if file_creds.is_expired and file_creds.refresh_token:
-                logger.info("Access token expired. Refreshing token via Google OAuth...")
-                try:
-                    refreshed = self._refresh_and_save(file_creds.refresh_token)
-                    self._cached_creds = refreshed
-                    return refreshed
-                except Exception as e:
-                    logger.warning(f"Failed to refresh token: {e}")
-            elif not file_creds.is_expired:
-                self._cached_creds = file_creds
-                return file_creds
+        for loader, label in (
+            (self._load_from_token_file, "~/.hermes/.antigravity_oauth.json"),
+            (self._load_from_gemini_cli, "the Antigravity/Gemini CLI credential file"),
+            (self._load_from_keyring, "the system keyring"),
+        ):
+            creds = loader()
+            if not creds:
+                continue
 
-        # 3. Check Antigravity / Gemini CLI Native Storage
-        native_creds = self._load_from_gemini_cli()
-        if native_creds:
-            if native_creds.is_expired and native_creds.refresh_token:
-                try:
-                    refreshed = self._refresh_and_save(native_creds.refresh_token)
-                    self._cached_creds = refreshed
-                    return refreshed
-                except Exception as e:
-                    logger.warning(f"Failed to refresh native token: {e}")
-            elif not native_creds.is_expired:
-                self._cached_creds = native_creds
-                return native_creds
+            if not creds.is_expired:
+                self._cached_creds = creds
+                return creds
 
-        # 4. Check System Keyring (Windows Credential Manager / macOS Keychain / Secret Service)
-        keyring_creds = self._load_from_keyring()
-        if keyring_creds:
-            if keyring_creds.is_expired and keyring_creds.refresh_token:
+            if creds.refresh_token:
+                logger.info(f"Access token from {label} expired. Refreshing via Google OAuth...")
                 try:
-                    refreshed = self._refresh_and_save(keyring_creds.refresh_token)
+                    refreshed = self._refresh_and_save(creds.refresh_token)
                     self._cached_creds = refreshed
                     return refreshed
                 except Exception as e:
-                    logger.warning(f"Failed to refresh keyring token: {e}")
-            elif not keyring_creds.is_expired:
-                self._cached_creds = keyring_creds
-                return keyring_creds
+                    logger.warning(f"Failed to refresh token from {label}: {e}")
+                    self._last_issue = (
+                        f"Credentials in {label} expired and could not be refreshed ({e}). "
+                        "Re-authenticate with 'hermes agy login', or refresh them by running "
+                        "the Antigravity/Gemini CLI once."
+                    )
+            else:
+                self._last_issue = (
+                    f"Credentials in {label} expired and carry no refresh token. "
+                    "Re-authenticate with 'hermes agy login --token <FRESH_TOKEN>' or "
+                    "'hermes agy login'."
+                )
 
         return None
 
@@ -265,7 +258,8 @@ class AGYAuthManager:
         if not creds:
             return {
                 "authenticated": False,
-                "message": "Not logged in. Run 'hermes agy login' to authenticate.",
+                "message": self._last_issue
+                or "Not logged in. Run 'hermes agy login' to authenticate.",
                 "token_file": str(self.token_file),
             }
 
@@ -343,6 +337,30 @@ class AGYAuthManager:
             )
         return None
 
+    @staticmethod
+    def _normalise_expiry(data: Dict[str, Any]) -> Optional[float]:
+        """Returns an absolute expiry in epoch seconds from any known field name.
+
+        The Gemini/Antigravity CLI writes 'expiry_date' in epoch MILLIseconds;
+        our own files use 'expires_at' in seconds, and OAuth responses carry a
+        relative 'expires_in'. Missing expiry used to read as "never expires",
+        so a long-dead token was sent to Google and came back 401.
+        """
+        expires_at = data.get("expires_at")
+        if isinstance(expires_at, (int, float)) and expires_at > 0:
+            return float(expires_at)
+
+        expiry_date = data.get("expiry_date")
+        if isinstance(expiry_date, (int, float)) and expiry_date > 0:
+            # Milliseconds if it is far beyond any plausible epoch-seconds value.
+            return float(expiry_date) / 1000.0 if expiry_date > 1e11 else float(expiry_date)
+
+        expires_in = data.get("expires_in")
+        if isinstance(expires_in, (int, float)) and expires_in > 0:
+            return time.time() + float(expires_in)
+
+        return None
+
     def _load_from_gemini_cli(self) -> Optional[AuthCredentials]:
         """Inspects ~/.gemini or ~/.gemini/antigravity-cli for existing credentials."""
         search_paths = [
@@ -357,7 +375,7 @@ class AGYAuthManager:
                 return AuthCredentials(
                     access_token=data["access_token"],
                     refresh_token=data.get("refresh_token"),
-                    expires_at=data.get("expires_at"),
+                    expires_at=self._normalise_expiry(data),
                     user_email=data.get("user_email"),
                     user_name=data.get("user_name"),
                     source=f"gemini_cli:{p.name}",

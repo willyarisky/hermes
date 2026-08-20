@@ -158,6 +158,28 @@ hermes agy export-token
 hermes agy login --token '<PASTE_JSON_HERE>'
 ```
 
+### Logging in Without Pasting a Token
+
+Two ways to avoid handling tokens by hand:
+
+**Reuse the Antigravity / Gemini CLI session.** If the official CLI is installed
+and logged in on the machine, the adapter picks up its credentials automatically
+from `~/.gemini/antigravity-cli/oauth_creds.json` or `~/.gemini/oauth_creds.json`
+— no token to copy, and the CLI keeps them refreshed:
+
+```bash
+hermes agy logout          # drop any hand-imported token so it stops shadowing
+hermes agy status          # Auth Source should read gemini_cli:oauth_creds.json
+```
+
+Expiry is read from the CLI's `expiry_date` field, so a stale session is
+reported as expired instead of being sent to Google and coming back `401`. When
+it lapses, run the CLI once to refresh it (or log in again below).
+
+**Browser OAuth with your own client.** `hermes agy login` runs the PKCE flow and
+stores a session with a refresh token, so it renews itself from then on. It needs
+an OAuth client once — see [Browser OAuth](#browser-oauth-optional--requires-your-own-google-oauth-client).
+
 ### Browser OAuth (Optional — requires your own Google OAuth client)
 
 `hermes agy login` without `--token` runs the OAuth 2.0 PKCE browser flow. No OAuth

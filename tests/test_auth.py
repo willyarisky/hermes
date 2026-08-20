@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -236,6 +237,65 @@ class TestPluginRegistration(unittest.TestCase):
         with patch.object(parsed._agy_parser, "print_help") as print_help:
             self.assertEqual(dispatch(parsed), 0)
         print_help.assert_called_once()
+
+
+class TestExpiredCredentialHandling(unittest.TestCase):
+    """A stale CLI token must be detected, not forwarded to Google as if fresh."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.hermes_home = Path(self.temp_dir.name) / ".hermes"
+        self.gemini_home = Path(self.temp_dir.name) / ".gemini"
+        self.hermes_home.mkdir(parents=True, exist_ok=True)
+        self.gemini_home.mkdir(parents=True, exist_ok=True)
+        self.env = patch.dict(
+            os.environ,
+            {"ANTIGRAVITY_TOKEN": "", "AGY_AUTH_TOKEN": "", "GEMINI_API_KEY": ""},
+        )
+        self.env.start()
+        self.mgr = AGYAuthManager(hermes_home=self.hermes_home, gemini_home=self.gemini_home)
+
+    def tearDown(self):
+        self.env.stop()
+        self.temp_dir.cleanup()
+
+    def _write_cli_creds(self, expiry_date_ms, refresh_token=None):
+        payload = {"access_token": "ya29.cli-token", "expiry_date": expiry_date_ms}
+        if refresh_token:
+            payload["refresh_token"] = refresh_token
+        (self.gemini_home / "oauth_creds.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_expiry_date_milliseconds_is_understood(self):
+        self._write_cli_creds(int((time.time() + 1800) * 1000))
+        with patch.object(self.mgr, "_load_from_keyring", return_value=None):
+            creds = self.mgr.get_credentials()
+        self.assertIsNotNone(creds)
+        self.assertFalse(creds.is_expired)
+        self.assertAlmostEqual(creds.expires_at, time.time() + 1800, delta=5)
+
+    def test_expired_cli_token_is_not_used(self):
+        self._write_cli_creds(int((time.time() - 3600) * 1000))
+        with patch.object(self.mgr, "_load_from_keyring", return_value=None):
+            self.assertIsNone(self.mgr.get_credentials())
+
+    def test_status_explains_why_it_is_unauthenticated(self):
+        self._write_cli_creds(int((time.time() - 3600) * 1000))
+        with patch.object(self.mgr, "_load_from_keyring", return_value=None):
+            status = self.mgr.get_status()
+        self.assertFalse(status["authenticated"])
+        self.assertIn("expired", status["message"])
+
+    def test_expired_token_with_refresh_token_is_refreshed(self):
+        self._write_cli_creds(int((time.time() - 3600) * 1000), refresh_token="1//refresh")
+        fresh = AuthCredentials(
+            access_token="ya29.fresh", expires_at=time.time() + 3600, source="hermes_oauth_file"
+        )
+        with patch.object(self.mgr, "_load_from_keyring", return_value=None), patch.object(
+            self.mgr, "_refresh_and_save", return_value=fresh
+        ) as refresh:
+            creds = self.mgr.get_credentials()
+        refresh.assert_called_once_with("1//refresh")
+        self.assertEqual(creds.access_token, "ya29.fresh")
 
 
 class TestDashboardAuth(unittest.TestCase):
