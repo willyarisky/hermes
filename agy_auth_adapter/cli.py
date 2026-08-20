@@ -1,8 +1,10 @@
 """CLI Command Handlers for Hermes Agent Antigravity (AGY) integration."""
 
 import argparse
+import getpass
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -16,9 +18,54 @@ from agy_auth_adapter.utils import get_hermes_home, safe_read_json, safe_write_j
 logger = logging.getLogger("agy_auth_adapter.cli")
 
 
+def _resolve_login_token(raw: Optional[str]) -> str:
+    """Resolves the token for 'login --token' from the flag, stdin, environment, or a prompt."""
+    if raw == "-":
+        return sys.stdin.read().strip()
+    if raw:
+        return raw.strip()
+
+    env_token = (
+        os.environ.get("ANTIGRAVITY_TOKEN")
+        or os.environ.get("AGY_AUTH_TOKEN")
+        or os.environ.get("GEMINI_API_KEY")
+        or ""
+    )
+    if env_token:
+        return env_token.strip()
+
+    if not sys.stdin.isatty():
+        return sys.stdin.read().strip()
+
+    return getpass.getpass("Paste your Antigravity token (input hidden): ").strip()
+
+
 def cmd_login(args: argparse.Namespace) -> int:
     """Handles 'hermes agy login'."""
     auth_mgr = AGYAuthManager()
+
+    # Token login: no Google OAuth client needed, so this is the path to use on
+    # servers and anywhere an Antigravity token is already available.
+    if getattr(args, "token", None) is not None:
+        token = _resolve_login_token(args.token)
+        if not token:
+            print(
+                "\n[ERROR] No token supplied. Pass it directly (hermes agy login --token '<TOKEN>'), "
+                "pipe it in (--token -), or set ANTIGRAVITY_TOKEN.",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            creds = auth_mgr.import_token(token_payload=token, no_keychain=args.no_keychain)
+            print(f"\n[SUCCESS] Logged into Google Antigravity with the supplied token!")
+            if creds.user_email:
+                print(f"  User:   {creds.user_email}")
+            print(f"  Target: {auth_mgr.token_file}")
+            return 0
+        except Exception as e:
+            print(f"\n[ERROR] Token login failed: {e}", file=sys.stderr)
+            return 1
+
     try:
         creds = auth_mgr.login(
             no_keychain=args.no_keychain,
@@ -269,7 +316,21 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", help="AGY command to execute")
 
     # login
-    login_parser = subparsers.add_parser("login", help="Authenticate with Google Antigravity via OAuth PKCE")
+    login_parser = subparsers.add_parser(
+        "login",
+        help="Authenticate with Google Antigravity (token login, or browser OAuth PKCE)",
+    )
+    login_parser.add_argument(
+        "--token",
+        nargs="?",
+        const="",
+        metavar="TOKEN",
+        help=(
+            "Log in with an existing Antigravity token instead of the OAuth browser flow. "
+            "Accepts a raw token or exported JSON; use '-' to read from stdin, or omit the "
+            "value to take ANTIGRAVITY_TOKEN / prompt for it."
+        ),
+    )
     login_parser.add_argument("--no-keychain", action="store_true", help="Do not store credentials in system keyring")
     login_parser.add_argument("--port", type=int, default=8085, help="Callback HTTP server port (default: 8085)")
     login_parser.add_argument(

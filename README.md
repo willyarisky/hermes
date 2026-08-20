@@ -10,7 +10,8 @@ A complete authentication adapter and model provider plugin allowing **[Hermes A
 
 ## 🌟 Key Features
 
-* 🔐 **Interactive OAuth 2.0 PKCE Login**: Browser-based authentication flow (`hermes agy login`) with automatic token retrieval and secure local storage.
+* 🎟️ **Token Login**: `hermes agy login --token '<TOKEN>'` stores an existing Antigravity token directly — no Google OAuth client to register, ideal for servers and CI.
+* 🔐 **Interactive OAuth 2.0 PKCE Login**: Optional browser-based flow (`hermes agy login`) with automatic token retrieval and secure local storage.
 * 🔄 **Multi-Source Credential Resolution**:
   1. Environment variables (`ANTIGRAVITY_TOKEN`, `AGY_AUTH_TOKEN`, `GEMINI_API_KEY`)
   2. Active Hermes profile: `~/.hermes/.antigravity_oauth.json`
@@ -66,35 +67,66 @@ pip install -e .
 
 ---
 
-## 🔑 OAuth Client Setup (Required Before First Login)
+## 🔑 Logging In
 
-No OAuth client credentials ship with this plugin — you supply your own so that
-nothing secret is ever committed to this repository.
+### Token Login (Recommended — no OAuth client required)
+
+If you already have an Antigravity token, hand it to the adapter directly:
+
+```bash
+# Pass the token inline (raw token or exported JSON both work)
+hermes agy login --token '<ANTIGRAVITY_TOKEN>'
+
+# Pipe it in (keeps the token out of your shell history)
+echo '<ANTIGRAVITY_TOKEN>' | hermes agy login --token -
+
+# Take it from the environment, or get prompted for it (hidden input)
+ANTIGRAVITY_TOKEN='<ANTIGRAVITY_TOKEN>' hermes agy login --token
+hermes agy login --token
+```
+
+The credentials are written to `~/.hermes/.antigravity_oauth.json` and mirrored to
+the system keyring (pass `--no-keychain` to skip that). Verify with `hermes agy status`.
+
+To move an existing session between machines:
+
+```bash
+# On the machine that is already logged in
+hermes agy export-token
+
+# On the target machine
+hermes agy login --token '<PASTE_JSON_HERE>'
+```
+
+### Browser OAuth (Optional — requires your own Google OAuth client)
+
+`hermes agy login` without `--token` runs the OAuth 2.0 PKCE browser flow. No OAuth
+client credentials ship with this plugin, so supply your own:
 
 1. In the [Google Cloud Console](https://console.cloud.google.com/apis/credentials),
    create an OAuth 2.0 Client ID of type **Desktop app**.
 2. Add `http://localhost:8085/oauth/callback` as an authorized redirect URI.
-3. Provide the credentials to the adapter in one of two ways:
+3. Provide the credentials via environment variables:
 
-**Environment variables** (recommended for servers, CI and containers):
+   ```bash
+   export AGY_OAUTH_CLIENT_ID="<id>.apps.googleusercontent.com"
+   export AGY_OAUTH_CLIENT_SECRET="<secret>"
+   ```
 
-```bash
-export AGY_OAUTH_CLIENT_ID="<id>.apps.googleusercontent.com"
-export AGY_OAUTH_CLIENT_SECRET="<secret>"
-```
+   …or in `~/.hermes/oauth_client.json` (honours `HERMES_HOME`):
 
-**Local config file** at `~/.hermes/oauth_client.json` (honours `HERMES_HOME`):
+   ```json
+   {
+     "client_id": "<id>.apps.googleusercontent.com",
+     "client_secret": "<secret>"
+   }
+   ```
 
-```json
-{
-  "client_id": "<id>.apps.googleusercontent.com",
-  "client_secret": "<secret>"
-}
-```
+   Keep that file out of version control and restrict its permissions
+   (`chmod 600 ~/.hermes/oauth_client.json`).
 
-Keep this file out of version control and restrict its permissions
-(`chmod 600 ~/.hermes/oauth_client.json`). If neither source is configured,
-`hermes agy login` fails immediately with setup instructions.
+If neither source is configured, the browser flow fails immediately with setup
+instructions — token login is unaffected and needs none of this.
 
 ---
 
@@ -102,9 +134,32 @@ Keep this file out of version control and restrict its permissions
 
 When running Hermes on a headless VPS / cloud server (AWS, GCP, DigitalOcean, Hetzner, etc.), use one of the following methods to authenticate:
 
-### Method 1: Headless / Manual OAuth (No GUI Required)
+### Method 1: Token Login (Fastest, No GUI or OAuth Client Required)
 
 On the remote server, run:
+
+```bash
+hermes agy login --token '<ANTIGRAVITY_TOKEN>'
+# or, keeping the token out of shell history:
+echo '<ANTIGRAVITY_TOKEN>' | hermes agy login --token -
+```
+
+If you are already logged in elsewhere, copy that session over:
+
+1. **On your local computer:**
+   ```bash
+   hermes agy export-token
+   ```
+2. **On your remote server:**
+   ```bash
+   hermes agy login --token '<PASTE_JSON_TOKEN_HERE>'
+   ```
+
+`hermes agy import-token '<TOKEN>'` remains available and does the same thing.
+
+### Method 2: Headless / Manual OAuth (Requires Your Own OAuth Client)
+
+With `AGY_OAUTH_CLIENT_ID` / `AGY_OAUTH_CLIENT_SECRET` configured, run:
 
 ```bash
 hermes agy login --headless
@@ -114,19 +169,6 @@ hermes agy login --headless
 2. Sign in with Google and authorize the app.
 3. Your browser will redirect to `http://localhost:8085/oauth/callback?code=...`.
 4. Copy the redirected URL from your browser's address bar and paste it into the server prompt.
-
-### Method 2: Export from Local Machine & Import on Server (Fastest)
-
-If you have already logged in on your local machine:
-
-1. **On your local computer:**
-   ```bash
-   hermes agy export-token
-   ```
-2. **On your remote server:**
-   ```bash
-   hermes agy import-token '<PASTE_JSON_TOKEN_HERE>'
-   ```
 
 ### Method 3: Secure Copy (SCP / Rsync)
 
@@ -161,7 +203,13 @@ systemctl --user enable --now hermes-agy.service
 
 ### 1. Authenticate with Antigravity (AGY)
 
-Run the login command to start the browser OAuth flow:
+Log in with an existing Antigravity token — nothing else to configure:
+
+```bash
+hermes agy login --token '<ANTIGRAVITY_TOKEN>'
+```
+
+Or run the browser OAuth flow instead (needs your own OAuth client, see [Logging In](#-logging-in)):
 
 ```bash
 hermes agy login
@@ -240,7 +288,10 @@ hermes agy daemon restart
 
 | Command | Description |
 | :--- | :--- |
-| `hermes agy login` | Launches browser OAuth PKCE authentication |
+| `hermes agy login --token '<TOKEN>'` | Logs in with an existing Antigravity token (raw or exported JSON; `-` reads stdin, no value uses `ANTIGRAVITY_TOKEN` or prompts) |
+| `hermes agy login` | Launches browser OAuth PKCE authentication (requires your own OAuth client) |
+| `hermes agy export-token` | Prints the active credentials JSON for transfer to another machine |
+| `hermes agy import-token '<TOKEN>'` | Same as `login --token`, kept for compatibility |
 | `hermes agy logout` | Clears stored session tokens from local profile and keyring |
 | `hermes agy status` | Displays active authentication details, token expiry, and daemon health |
 | `hermes agy daemon start` | Starts proxy bridge as a detached background daemon |

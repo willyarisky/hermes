@@ -1,13 +1,16 @@
 """Unit tests for AGY Auth Adapter."""
 
+import argparse
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from agy_auth_adapter.auth import AGYAuthManager, AuthCredentials
+from agy_auth_adapter.cli import cmd_login
 from agy_auth_adapter.dashboard_auth import AntigravityDashboardAuthProvider
 from agy_auth_adapter.oauth import create_auth_url, generate_pkce_pair
 from agy_auth_adapter.provider import AGYModelProvider
@@ -131,6 +134,51 @@ class TestAGYAuth(unittest.TestCase):
         self.assertEqual(imported_creds.user_email, "export@example.com")
         self.assertTrue((target_home / ".antigravity_oauth.json").exists())
         target_dir.cleanup()
+
+
+class TestTokenLogin(unittest.TestCase):
+    """'hermes agy login --token' must work without any OAuth client configured."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.hermes_home = Path(self.temp_dir.name) / ".hermes"
+        self.hermes_home.mkdir(parents=True, exist_ok=True)
+        self.env_patch = patch.dict(os.environ, {"HERMES_HOME": str(self.hermes_home)}, clear=False)
+        self.env_patch.start()
+
+    def tearDown(self):
+        self.env_patch.stop()
+        self.temp_dir.cleanup()
+
+    def _login(self, token):
+        args = argparse.Namespace(token=token, no_keychain=True, port=8085, headless=False)
+        return cmd_login(args)
+
+    def test_login_with_raw_token(self):
+        self.assertEqual(self._login("raw-token-abc"), 0)
+        stored = json.loads((self.hermes_home / ".antigravity_oauth.json").read_text())
+        self.assertEqual(stored["access_token"], "raw-token-abc")
+
+    def test_login_with_exported_json(self):
+        payload = json.dumps({"access_token": "json-token", "user_email": "user@example.com"})
+        self.assertEqual(self._login(payload), 0)
+        stored = json.loads((self.hermes_home / ".antigravity_oauth.json").read_text())
+        self.assertEqual(stored["access_token"], "json-token")
+        self.assertEqual(stored["user_email"], "user@example.com")
+
+    def test_login_falls_back_to_environment_token(self):
+        with patch.dict(os.environ, {"ANTIGRAVITY_TOKEN": "env-token"}):
+            self.assertEqual(self._login(""), 0)
+        stored = json.loads((self.hermes_home / ".antigravity_oauth.json").read_text())
+        self.assertEqual(stored["access_token"], "env-token")
+
+    def test_login_without_any_token_fails(self):
+        blank_env = {"ANTIGRAVITY_TOKEN": "", "AGY_AUTH_TOKEN": "", "GEMINI_API_KEY": ""}
+        with patch.dict(os.environ, blank_env), patch.object(sys.stdin, "isatty", return_value=True), patch(
+            "agy_auth_adapter.cli.getpass.getpass", return_value=""
+        ):
+            self.assertEqual(self._login(""), 1)
+        self.assertFalse((self.hermes_home / ".antigravity_oauth.json").exists())
 
 
 class TestDashboardAuth(unittest.TestCase):
