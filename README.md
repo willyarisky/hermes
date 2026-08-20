@@ -158,6 +158,38 @@ hermes agy export-token
 hermes agy login --token '<PASTE_JSON_HERE>'
 ```
 
+### Reusing the `agy` CLI Login (No Token, No OAuth Client)
+
+If the Antigravity (`agy`) CLI is installed and logged in, the adapter uses its
+credentials directly — nothing to paste and no OAuth client to register:
+
+```bash
+hermes agy detect     # show every CLI credential store found, and which one is active
+hermes agy status     # Auth Source reads agy_cli:<file> when one is in use
+```
+
+`detect` lists the directories searched (`~/.agy`, `~/.antigravity`,
+`~/.gemini/antigravity-cli`, `~/.config/*`, and the platform config dirs on
+macOS/Windows), each credential file found, whether it is still valid, and
+whether it carries a refresh token. If your CLI keeps its data somewhere else,
+point at it and that tree becomes the only one searched:
+
+```bash
+export AGY_CLI_HOME=/path/to/agy/config
+hermes agy detect
+```
+
+Ordering: environment variables → `~/.hermes/.antigravity_oauth.json` → the
+Antigravity/Gemini CLI files → discovered `agy` CLI stores → system keyring.
+Run `hermes agy logout` to drop a hand-imported token that is shadowing the CLI
+session.
+
+**When the CLI session lapses**, run the `agy` CLI once — it renews its own
+tokens, and the adapter picks the refreshed file up on the next request. The
+adapter can only refresh a CLI credential by itself when the store records the
+`client_id`/`client_secret` it was issued to, or when you have configured your
+own OAuth client.
+
 ### Logging in Without Pasting a Token
 
 Two ways to avoid handling tokens by hand:
@@ -381,6 +413,7 @@ hermes agy daemon restart
 | `hermes agy daemon restart`| Restarts background daemon |
 | `hermes agy daemon status` | Checks background daemon PID and HTTP health status |
 | `hermes agy proxy [-d]` | Runs OpenAI-compatible HTTP bridge proxy (foreground or `--daemon`) |
+| `hermes agy detect` | Shows Antigravity CLI credential stores found on this machine |
 | `hermes agy models` | Lists supported Antigravity models |
 | `hermes agy setup [-d]` | Auto-configures `~/.hermes/config.yaml` with AGY settings |
 
@@ -416,6 +449,7 @@ hermes/
 │   ├── provider.py                # Model provider & OpenAI<->Gemini message translator
 │   ├── proxy.py                   # Local OpenAI-compatible HTTP bridge proxy
 │   ├── cli.py                     # CLI subcommand handlers
+│   ├── cli_credentials.py         # Discovery of the 'agy' CLI's own credential store
 │   └── utils.py                   # PKCE & JSON filesystem utilities
 └── tests/
     ├── __init__.py

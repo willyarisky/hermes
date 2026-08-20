@@ -11,6 +11,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import agy_auth_adapter
+from agy_auth_adapter.cli_credentials import (
+    discover_cli_credentials,
+    load_best_cli_credential,
+)
 from agy_auth_adapter.auth import AGYAuthManager, AuthCredentials
 from agy_auth_adapter.cli import build_parser, cmd_login, dispatch
 from agy_auth_adapter.dashboard_auth import AntigravityDashboardAuthProvider
@@ -65,7 +69,9 @@ class TestAGYAuth(unittest.TestCase):
             self.assertIn("AGY_OAUTH_CLIENT_ID", str(ctx.exception))
 
     def test_unauthenticated_status(self):
-        with patch.dict(os.environ, {}, clear=True), patch("agy_auth_adapter.auth.AGYAuthManager._load_from_keyring", return_value=None):
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "agy_auth_adapter.auth.AGYAuthManager._load_from_keyring", return_value=None
+        ), patch("agy_auth_adapter.auth.load_best_cli_credential", return_value=None):
             mgr = AGYAuthManager(
                 hermes_home=self.hermes_home,
                 gemini_home=self.gemini_home,
@@ -267,7 +273,9 @@ class TestExpiredCredentialHandling(unittest.TestCase):
 
     def test_expiry_date_milliseconds_is_understood(self):
         self._write_cli_creds(int((time.time() + 1800) * 1000))
-        with patch.object(self.mgr, "_load_from_keyring", return_value=None):
+        with patch.object(self.mgr, "_load_from_keyring", return_value=None), patch(
+            "agy_auth_adapter.auth.load_best_cli_credential", return_value=None
+        ):
             creds = self.mgr.get_credentials()
         self.assertIsNotNone(creds)
         self.assertFalse(creds.is_expired)
@@ -275,12 +283,16 @@ class TestExpiredCredentialHandling(unittest.TestCase):
 
     def test_expired_cli_token_is_not_used(self):
         self._write_cli_creds(int((time.time() - 3600) * 1000))
-        with patch.object(self.mgr, "_load_from_keyring", return_value=None):
+        with patch.object(self.mgr, "_load_from_keyring", return_value=None), patch(
+            "agy_auth_adapter.auth.load_best_cli_credential", return_value=None
+        ):
             self.assertIsNone(self.mgr.get_credentials())
 
     def test_status_explains_why_it_is_unauthenticated(self):
         self._write_cli_creds(int((time.time() - 3600) * 1000))
-        with patch.object(self.mgr, "_load_from_keyring", return_value=None):
+        with patch.object(self.mgr, "_load_from_keyring", return_value=None), patch(
+            "agy_auth_adapter.auth.load_best_cli_credential", return_value=None
+        ):
             status = self.mgr.get_status()
         self.assertFalse(status["authenticated"])
         self.assertIn("expired", status["message"])
@@ -290,12 +302,97 @@ class TestExpiredCredentialHandling(unittest.TestCase):
         fresh = AuthCredentials(
             access_token="ya29.fresh", expires_at=time.time() + 3600, source="hermes_oauth_file"
         )
-        with patch.object(self.mgr, "_load_from_keyring", return_value=None), patch.object(
-            self.mgr, "_refresh_and_save", return_value=fresh
-        ) as refresh:
+        with patch.object(self.mgr, "_load_from_keyring", return_value=None), patch(
+            "agy_auth_adapter.auth.load_best_cli_credential", return_value=None
+        ), patch.object(self.mgr, "_refresh_and_save", return_value=fresh) as refresh:
             creds = self.mgr.get_credentials()
         refresh.assert_called_once_with("1//refresh")
         self.assertEqual(creds.access_token, "ya29.fresh")
+
+
+class TestAgyCliDiscovery(unittest.TestCase):
+    """'hermes agy' should use what the 'agy' CLI already stored, with no token pasted."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.cli_home = Path(self.temp_dir.name) / "agy-cli"
+        self.cli_home.mkdir(parents=True, exist_ok=True)
+        self.env = patch.dict(os.environ, {"AGY_CLI_HOME": str(self.cli_home)})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.temp_dir.cleanup()
+
+    def _write(self, name, payload, subdir=None):
+        target = self.cli_home if subdir is None else self.cli_home / subdir
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_finds_a_flat_credential_file(self):
+        self._write("oauth_creds.json", {
+            "access_token": "ya29.cli",
+            "refresh_token": "1//r",
+            "expiry_date": int((time.time() + 900) * 1000),
+        })
+        found = discover_cli_credentials()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["access_token"], "ya29.cli")
+        self.assertFalse(found[0]["expired"])
+
+    def test_finds_a_nested_credential_file(self):
+        self._write("credentials.json", {
+            "accounts": {"user@example.com": {"access_token": "ya29.nested", "expires_in": 3600}}
+        })
+        found = discover_cli_credentials()
+        self.assertEqual(found[0]["access_token"], "ya29.nested")
+
+    def test_usable_credential_is_preferred_over_expired_one(self):
+        self._write("oauth_creds.json", {
+            "access_token": "ya29.old", "expiry_date": int((time.time() - 60) * 1000)
+        })
+        self._write("token.json", {
+            "access_token": "ya29.new", "expiry_date": int((time.time() + 3600) * 1000)
+        }, subdir="profiles")
+        best = load_best_cli_credential()
+        self.assertEqual(best["access_token"], "ya29.new")
+
+    def test_auth_manager_uses_the_discovered_credential(self):
+        self._write("oauth_creds.json", {
+            "access_token": "ya29.discovered",
+            "expiry_date": int((time.time() + 3600) * 1000),
+        })
+        hermes_home = Path(self.temp_dir.name) / ".hermes"
+        hermes_home.mkdir(parents=True, exist_ok=True)
+        mgr = AGYAuthManager(hermes_home=hermes_home, gemini_home=Path(self.temp_dir.name) / ".gemini")
+        with patch.dict(os.environ, {"ANTIGRAVITY_TOKEN": "", "AGY_AUTH_TOKEN": "", "GEMINI_API_KEY": ""}), \
+                patch.object(mgr, "_load_from_keyring", return_value=None):
+            creds = mgr.get_credentials()
+        self.assertIsNotNone(creds)
+        self.assertEqual(creds.access_token, "ya29.discovered")
+        self.assertTrue(creds.source.startswith("agy_cli:"))
+
+    def test_client_stored_beside_the_token_is_used_for_refresh(self):
+        self._write("oauth_creds.json", {
+            "access_token": "ya29.old",
+            "refresh_token": "1//r",
+            "client_id": "cli-client.apps.googleusercontent.com",
+            "client_secret": "cli-secret",
+            "expiry_date": int((time.time() - 60) * 1000),
+        })
+        hermes_home = Path(self.temp_dir.name) / ".hermes2"
+        hermes_home.mkdir(parents=True, exist_ok=True)
+        mgr = AGYAuthManager(hermes_home=hermes_home, gemini_home=Path(self.temp_dir.name) / ".gemini")
+        with patch.dict(os.environ, {"ANTIGRAVITY_TOKEN": "", "AGY_AUTH_TOKEN": "", "GEMINI_API_KEY": ""}), \
+                patch.object(mgr, "_load_from_keyring", return_value=None), \
+                patch("agy_auth_adapter.auth.refresh_access_token") as refresh:
+            refresh.return_value = {"access_token": "ya29.renewed", "expires_at": time.time() + 3600}
+            creds = mgr.get_credentials()
+        self.assertEqual(creds.access_token, "ya29.renewed")
+        self.assertEqual(refresh.call_args.kwargs["client_id"], "cli-client.apps.googleusercontent.com")
+        self.assertEqual(refresh.call_args.kwargs["client_secret"], "cli-secret")
 
 
 class TestDashboardAuth(unittest.TestCase):

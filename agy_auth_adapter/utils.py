@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -67,6 +68,30 @@ def get_default_proxy_port() -> int:
             logger.warning("AGY_PROXY_PORT=%s is not a number; ignoring", raw)
 
     return get_configured_proxy_port() or DEFAULT_PROXY_PORT
+
+
+def normalise_token_expiry(data: Dict[str, Any]) -> Optional[float]:
+    """Returns an absolute expiry in epoch seconds from any known field name.
+
+    CLI credential stores differ: the Antigravity/Gemini CLI writes 'expiry_date'
+    in epoch MILLIseconds, our own files use 'expires_at' in seconds, and raw
+    OAuth responses carry a relative 'expires_in'. A missing expiry reads as
+    "unknown", never as "never expires".
+    """
+    expires_at = data.get("expires_at")
+    if isinstance(expires_at, (int, float)) and expires_at > 0:
+        return float(expires_at)
+
+    expiry_date = data.get("expiry_date") or data.get("expiryDate") or data.get("expiry")
+    if isinstance(expiry_date, (int, float)) and expiry_date > 0:
+        # Milliseconds if it is far beyond any plausible epoch-seconds value.
+        return float(expiry_date) / 1000.0 if expiry_date > 1e11 else float(expiry_date)
+
+    expires_in = data.get("expires_in") or data.get("expiresIn")
+    if isinstance(expires_in, (int, float)) and expires_in > 0:
+        return time.time() + float(expires_in)
+
+    return None
 
 
 def find_free_port(preferred: Optional[int] = None, host: Optional[str] = None) -> int:

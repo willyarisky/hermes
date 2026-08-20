@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -190,6 +191,50 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"Endpoint:      {daemon_status['endpoint']} (Inactive)")
         print(f"To start daemon: hermes agy daemon start")
     print("-----------------------------------------------\n")
+    return 0
+
+
+def cmd_detect(args: argparse.Namespace) -> int:
+    """Handles 'hermes agy detect' — shows the credential stores found on this machine."""
+    from agy_auth_adapter.cli_credentials import candidate_roots, discover_cli_credentials
+
+    print("\n--- Antigravity CLI Credential Discovery ---")
+
+    roots = candidate_roots()
+    if roots:
+        print("Searched CLI config directories:")
+        for root in roots:
+            print(f"  - {root}")
+    else:
+        print("No Antigravity/Gemini CLI configuration directory found.")
+        print("If the CLI stores its data elsewhere, point at it with:")
+        print("  export AGY_CLI_HOME=/path/to/cli/config")
+
+    creds = discover_cli_credentials()
+    if not creds:
+        print("\nNo credential store found.")
+        print("Log in with the 'agy' CLI first, or use: hermes agy login --token '<TOKEN>'")
+        return 1
+
+    print(f"\nFound {len(creds)} credential store(s):")
+    for cred in creds:
+        state = "EXPIRED" if cred["expired"] else "usable"
+        if cred["expires_at"]:
+            remaining = int(cred["expires_at"] - time.time())
+            when = f"{remaining // 60}m {remaining % 60}s left" if remaining > 0 else "lapsed"
+        else:
+            when = "no expiry recorded"
+        print(f"\n  {cred['path']}")
+        print(f"    State:         {state} ({when})")
+        print(f"    Refresh token: {'yes' if cred['refresh_token'] else 'no'}")
+        print(f"    Client stored: {'yes' if cred.get('client_id') else 'no'}")
+        if cred.get("user_email"):
+            print(f"    Account:       {cred['user_email']}")
+
+    active = AGYAuthManager().get_status()
+    print("\nActive credential source: ", end="")
+    print(active.get("source") if active["authenticated"] else f"none ({active.get('message')})")
+    print("--------------------------------------------\n")
     return 0
 
 
@@ -412,6 +457,12 @@ def add_agy_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentPar
         help="Also check the stored credential against Google (catches expired/invalid tokens)",
     )
 
+    # detect
+    subparsers.add_parser(
+        "detect",
+        help="Show Antigravity CLI credential stores found on this machine",
+    )
+
     # models
     subparsers.add_parser("models", help="List supported Antigravity models")
 
@@ -467,6 +518,7 @@ COMMANDS = {
     "import-token": cmd_import_token,
     "logout": cmd_logout,
     "status": cmd_status,
+    "detect": cmd_detect,
     "models": cmd_models,
     "proxy": cmd_proxy,
     "daemon": cmd_daemon,

@@ -13,6 +13,7 @@ from agy_auth_adapter.oauth import (
     refresh_access_token,
     run_interactive_login,
 )
+from agy_auth_adapter.cli_credentials import load_best_cli_credential
 from agy_auth_adapter.utils import (
     get_gemini_home,
     get_hermes_home,
@@ -56,6 +57,9 @@ class AGYAuthManager:
         self.token_file = self.hermes_home / ".antigravity_oauth.json"
         self._cached_creds: Optional[AuthCredentials] = None
         self._last_issue: Optional[str] = None
+        # Client the discovered CLI credential was issued to, when its store
+        # records it — needed to refresh that credential.
+        self._discovered_client: Optional[Dict[str, Optional[str]]] = None
 
     def get_credentials(self, force_refresh: bool = False) -> Optional[AuthCredentials]:
         """Resolves and returns valid credentials from the priority hierarchy."""
@@ -81,6 +85,7 @@ class AGYAuthManager:
         for loader, label in (
             (self._load_from_token_file, "~/.hermes/.antigravity_oauth.json"),
             (self._load_from_gemini_cli, "the Antigravity/Gemini CLI credential file"),
+            (self._load_from_cli_discovery, "the installed 'agy' CLI credential store"),
             (self._load_from_keyring, "the system keyring"),
         ):
             creds = loader()
@@ -98,13 +103,16 @@ class AGYAuthManager:
                     self._cached_creds = refreshed
                     return refreshed
                 except Exception as e:
-                    logger.warning(f"Failed to refresh token from {label}: {e}")
-                    self._last_issue = (
-                        f"Credentials in {label} expired and could not be refreshed ({e}). "
-                        "Re-authenticate with 'hermes agy login', or refresh them by running "
-                        "the Antigravity/Gemini CLI once."
-                    )
-            else:
+                    reason = str(e).splitlines()[0]
+                    logger.warning(f"Failed to refresh token from {label}: {reason}")
+                    if not self._last_issue:
+                        self._last_issue = (
+                            f"Credentials in {label} expired. Refresh them by running the "
+                            "'agy' CLI once (it renews its own session), or re-authenticate "
+                            "with 'hermes agy login --token <FRESH_TOKEN>'. "
+                            f"Automatic refresh is unavailable here: {reason}"
+                        )
+            elif not self._last_issue:
                 self._last_issue = (
                     f"Credentials in {label} expired and carry no refresh token. "
                     "Re-authenticate with 'hermes agy login --token <FRESH_TOKEN>' or "
@@ -382,6 +390,31 @@ class AGYAuthManager:
                 )
         return None
 
+    def _load_from_cli_discovery(self) -> Optional[AuthCredentials]:
+        """Reads whatever the installed 'agy' CLI already stored, wherever it keeps it."""
+        try:
+            cred = load_best_cli_credential()
+        except Exception as e:  # discovery must never break credential resolution
+            logger.debug(f"CLI credential discovery failed: {e}")
+            return None
+        if not cred:
+            return None
+
+        if cred.get("client_id") and cred.get("client_secret"):
+            self._discovered_client = {
+                "client_id": cred["client_id"],
+                "client_secret": cred["client_secret"],
+            }
+
+        return AuthCredentials(
+            access_token=cred["access_token"],
+            refresh_token=cred.get("refresh_token"),
+            expires_at=cred.get("expires_at"),
+            user_email=cred.get("user_email"),
+            user_name=cred.get("user_name"),
+            source=f"agy_cli:{cred['path'].name}",
+        )
+
     def _load_from_keyring(self) -> Optional[AuthCredentials]:
         try:
             import json
@@ -414,7 +447,12 @@ class AGYAuthManager:
             pass
 
     def _refresh_and_save(self, refresh_token: str) -> AuthCredentials:
-        new_data = refresh_access_token(refresh_token)
+        client = self._discovered_client or {}
+        new_data = refresh_access_token(
+            refresh_token,
+            client_id=client.get("client_id"),
+            client_secret=client.get("client_secret"),
+        )
         creds = AuthCredentials(
             access_token=new_data["access_token"],
             refresh_token=new_data.get("refresh_token", refresh_token),
