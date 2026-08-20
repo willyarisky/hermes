@@ -25,6 +25,24 @@ New-Item -ItemType Directory -Force -Path (Join-Path $HermesHome "logs") | Out-N
 # 2. Locate the plugin sources
 #    When piped through `irm | iex` there is no script file on disk, so the
 #    repository has to be downloaded before anything can be copied.
+function Invoke-Quiet {
+    # Runs a native command, swallowing every stream, and returns its exit code.
+    # Needed because Windows PowerShell 5.1 turns any stderr output from a native
+    # executable into a terminating NativeCommandError while $ErrorActionPreference
+    # is "Stop" — even when stderr is redirected.
+    param([string]$FilePath, [string[]]$Arguments = @())
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $FilePath @Arguments *> $null
+        return $LASTEXITCODE
+    } catch {
+        return 1
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Test-PluginCheckout([string]$Dir) {
     if (-not $Dir) { return $false }
     return (Test-Path (Join-Path $Dir "agy_auth_adapter")) -and (Test-Path (Join-Path $Dir "plugin.yaml"))
@@ -100,8 +118,7 @@ finally {
 # 6. Work out which command form is available on this machine
 $AgyCmd = "python -m agy_auth_adapter.cli"
 if (Get-Command hermes -ErrorAction SilentlyContinue) {
-    $null = & hermes agy --help 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    if ((Invoke-Quiet "hermes" @("agy", "--help")) -eq 0) {
         $AgyCmd = "hermes agy"
     } else {
         Write-Host ""

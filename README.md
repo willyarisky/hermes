@@ -59,6 +59,31 @@ from GitHub. From a cloned repo, run `./install.sh` (or `.\install.ps1`) instead
 the local checkout is used. Set `HERMES_HOME` to install somewhere other than
 `~/.hermes`.
 
+### Updating
+
+Update an existing install in place — `~/.hermes/config.yaml` and your stored
+credentials are left untouched, and the bridge daemon is restarted only if it
+was already running:
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/willyarisky/hermes/refs/heads/main/update.sh | bash
+# or, from the installed plugin directory:
+~/.hermes/plugins/agy-auth-adapter/update.sh
+```
+
+```powershell
+# Windows PowerShell
+irm https://raw.githubusercontent.com/willyarisky/hermes/refs/heads/main/update.ps1 | iex
+# or:  & "$HOME\.hermes\plugins\agy-auth-adapter\update.ps1"
+```
+
+Useful flags (both scripts): `--check` / `-Check` reports the installed and
+available versions without changing anything, `--no-restart` / `-NoRestart`
+leaves the daemon alone, and `--branch <name>` / `-Branch <name>` updates from a
+different branch. If the plugin directory is a git checkout, the updater
+fast-forwards it instead of overwriting files.
+
 ### Option 3: Pip / Virtual Environment
 
 ```bash
@@ -355,6 +380,8 @@ hermes agy daemon restart
 hermes/
 ├── __init__.py                    # Hermes directory-plugin entry point (re-exports register)
 ├── plugin.yaml                    # Hermes Agent plugin manifest
+├── install.sh / install.ps1       # Installers (work piped from GitHub)
+├── update.sh / update.ps1         # In-place updaters (--check, --no-restart)
 ├── pyproject.toml                 # Package setup and entrypoints
 ├── requirements.txt               # Dependencies
 ├── config.example.yaml            # Example Hermes agent configuration

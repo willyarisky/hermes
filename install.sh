@@ -14,6 +14,28 @@ PLUGIN_DIR="$HERMES_DIR/plugins/agy-auth-adapter"
 REPO_SLUG="${AGY_REPO_SLUG:-willyarisky/hermes}"
 REPO_BRANCH="${AGY_REPO_BRANCH:-main}"
 
+# Pick an interpreter that actually runs: on Windows/msys 'python3' can be a
+# Microsoft Store stub that is on PATH but exits with an error when invoked.
+pick_python() {
+    for candidate in python3 python; do
+        if command -v "$candidate" > /dev/null 2>&1 && "$candidate" -c "import sys" > /dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+pick_pip() {
+    for candidate in pip3 pip; do
+        if command -v "$candidate" > /dev/null 2>&1 && "$candidate" --version > /dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 TMP_DIR=""
 cleanup() { if [ -n "$TMP_DIR" ]; then rm -rf "$TMP_DIR"; fi; }
 trap cleanup EXIT
@@ -83,13 +105,9 @@ fi
 
 # 4. Install Python dependencies
 echo "[*] Installing Python dependencies..."
-if command -v pip3 > /dev/null 2>&1; then
-    PIP_CMD="pip3"
-elif command -v pip > /dev/null 2>&1; then
-    PIP_CMD="pip"
-else
-    PIP_CMD=""
-    echo "[!] Neither pip nor pip3 found; skipping dependency install." >&2
+PIP_CMD="$(pick_pip || true)"
+if [ -z "$PIP_CMD" ]; then
+    echo "[!] Neither pip nor pip3 is usable; skipping dependency install." >&2
 fi
 if [ -n "$PIP_CMD" ]; then
     "$PIP_CMD" install -q pyyaml keyring \
@@ -100,11 +118,10 @@ fi
 # 5. Configure ~/.hermes/config.yaml (run from the installed plugin so the
 #    agy_auth_adapter package is importable)
 echo "[*] Configuring Hermes config.yaml..."
-if command -v python3 > /dev/null 2>&1; then
-    PY_CMD="python3"
-else
-    PY_CMD="python"
-fi
+PY_CMD="$(pick_python)" || {
+    echo "[!] No working Python interpreter found (tried python3, python)." >&2
+    exit 1
+}
 (cd "$PLUGIN_DIR" && PYTHONPATH="$PLUGIN_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     "$PY_CMD" -m agy_auth_adapter.cli setup --start-daemon)
 
