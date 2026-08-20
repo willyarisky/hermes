@@ -45,7 +45,7 @@ Run the included installation script on your remote server:
 
 ```bash
 # Linux / macOS Server
-curl -fsSL https://raw.githubusercontent.com/willyarisky/hermes-agy-auth-adapter/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/willyarisky/hermes/refs/heads/main/install.sh | bash
 # Or run locally from cloned repo:
 ./install.sh
 
