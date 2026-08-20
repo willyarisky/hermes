@@ -154,6 +154,14 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"Daemon:        RUNNING [PID: {daemon_status['pid']}]")
         print(f"Endpoint:      {daemon_status['endpoint']}")
         print(f"Log File:      {daemon_status['log_file']}")
+    elif daemon_status.get("port_conflict"):
+        print(f"Daemon:        STOPPED")
+        print(f"Endpoint:      {daemon_status['endpoint']} (PORT IN USE by another service)")
+        print(f"               Requests to this endpoint are answered by something else,")
+        print(f"               so Hermes will see 404s instead of completions.")
+        print(f"               Free the port, or move the bridge:")
+        print(f"                 hermes agy daemon start --port <PORT>")
+        print(f"                 hermes agy setup --port <PORT>")
     else:
         print(f"Daemon:        STOPPED")
         print(f"Endpoint:      {daemon_status['endpoint']} (Inactive)")
@@ -229,6 +237,12 @@ def cmd_daemon(args: argparse.Namespace) -> int:
             print(f"Endpoint: {st['endpoint']}")
             print(f"Health:   HEALTHY")
             print(f"Logs:     {st['log_file']}")
+        elif st.get("port_conflict"):
+            print(f"Status:   STOPPED")
+            print(f"Endpoint: {st['endpoint']} (PORT IN USE by another service)")
+            print(f"Fix:      free the port, or move the bridge with")
+            print(f"            hermes agy daemon start --port <PORT>")
+            print(f"            hermes agy setup --port <PORT>")
         else:
             print(f"Status:   STOPPED")
             print(f"Endpoint: {st['endpoint']} (offline)")
@@ -278,6 +292,18 @@ def cmd_setup(args: argparse.Namespace) -> int:
             yaml.dump(cfg, f, default_flow_style=False)
 
         print("[SUCCESS] ~/.hermes/config.yaml updated with AGY provider settings!")
+
+        if DaemonManager().probe_port(port=args.port) == "foreign":
+            print("")
+            print(
+                f"[WARNING] Port {args.port} is already in use by another service."
+            )
+            print(
+                "          Hermes would send model requests to it and get 404s back."
+            )
+            print(
+                "          Re-run with a free port, e.g.: hermes agy setup --port 8090"
+            )
     except ImportError:
         # Fallback to simple snippet printing
         snippet = f"""

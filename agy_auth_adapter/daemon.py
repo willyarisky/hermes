@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -48,6 +49,30 @@ class DaemonManager:
         except Exception:
             return False
         return False
+
+    def probe_port(
+        self,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        timeout: float = 1.0,
+    ) -> str:
+        """Reports who is listening on the proxy port.
+
+        Returns "free" (nothing listening), "agy" (our proxy answered /health),
+        or "foreign" (something else owns the port — a web server, another app).
+        A foreign listener is the usual cause of HTML 404s coming back from the
+        configured base_url instead of chat completions.
+        """
+        target_host = host or self.default_host
+        target_port = port or self.default_port
+
+        try:
+            with socket.create_connection((target_host, target_port), timeout=timeout):
+                pass
+        except OSError:
+            return "free"
+
+        return "agy" if self.is_healthy(target_host, target_port, timeout=timeout) else "foreign"
 
     def get_running_pid(self) -> Optional[int]:
         """Reads the PID file and checks if the process is currently active."""
@@ -96,6 +121,14 @@ class DaemonManager:
         existing_pid = self.get_running_pid()
         if existing_pid and self.is_healthy(target_host, target_port):
             return True, f"AGY Daemon is already running (PID: {existing_pid}, http://{target_host}:{target_port})"
+
+        if self.probe_port(target_host, target_port) == "foreign":
+            return False, (
+                f"Port {target_port} on {target_host} is already in use by another service "
+                f"(it answered, but not as the AGY proxy). Free the port, or run the bridge "
+                f"elsewhere with: hermes agy daemon start --port <PORT> "
+                f"(and hermes agy setup --port <PORT> so Hermes points at it)."
+            )
 
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         log_out = open(self.log_file, "a", encoding="utf-8")
@@ -188,12 +221,14 @@ class DaemonManager:
         target_host = host or self.default_host
         target_port = port or self.default_port
         pid = self.get_running_pid()
-        healthy = self.is_healthy(target_host, target_port)
+        probe = self.probe_port(target_host, target_port)
+        healthy = probe == "agy"
 
         return {
             "running": pid is not None and healthy,
             "pid": pid,
             "healthy": healthy,
+            "port_conflict": probe == "foreign",
             "endpoint": f"http://{target_host}:{target_port}/v1",
             "pid_file": str(self.pid_file),
             "log_file": str(self.log_file),

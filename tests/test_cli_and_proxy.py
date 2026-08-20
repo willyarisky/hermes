@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from agy_auth_adapter.cli import build_parser, main as cli_main
+from agy_auth_adapter.daemon import DaemonManager
 from agy_auth_adapter.provider import AGYModelProvider
 from agy_auth_adapter.proxy import AGYProxyHandler
 
@@ -102,6 +103,48 @@ class TestStreamingAndTranslation(unittest.TestCase):
         self.assertEqual(res["choices"][0]["finish_reason"], "tool_calls")
         self.assertEqual(len(res["choices"][0]["message"]["tool_calls"]), 1)
         self.assertEqual(res["choices"][0]["message"]["tool_calls"][0]["function"]["name"], "search_code")
+
+
+class TestPortConflictDetection(unittest.TestCase):
+    """A foreign listener on the proxy port is the usual cause of HTML 404s."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.mgr = DaemonManager(hermes_home=Path(self.temp_dir.name))
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_probe_reports_free_when_nothing_listens(self):
+        with patch("agy_auth_adapter.daemon.socket.create_connection", side_effect=OSError):
+            self.assertEqual(self.mgr.probe_port(port=8080), "free")
+
+    def test_probe_reports_agy_when_our_proxy_answers(self):
+        with patch("agy_auth_adapter.daemon.socket.create_connection"), patch.object(
+            self.mgr, "is_healthy", return_value=True
+        ):
+            self.assertEqual(self.mgr.probe_port(port=8080), "agy")
+
+    def test_probe_reports_foreign_when_someone_else_answers(self):
+        with patch("agy_auth_adapter.daemon.socket.create_connection"), patch.object(
+            self.mgr, "is_healthy", return_value=False
+        ):
+            self.assertEqual(self.mgr.probe_port(port=8080), "foreign")
+
+    def test_start_refuses_to_run_against_a_foreign_listener(self):
+        with patch.object(self.mgr, "probe_port", return_value="foreign"), patch(
+            "agy_auth_adapter.daemon.subprocess.Popen"
+        ) as popen:
+            ok, msg = self.mgr.start(port=8080)
+        self.assertFalse(ok)
+        self.assertIn("already in use", msg)
+        popen.assert_not_called()
+
+    def test_status_flags_the_conflict(self):
+        with patch.object(self.mgr, "probe_port", return_value="foreign"):
+            st = self.mgr.status(port=8080)
+        self.assertTrue(st["port_conflict"])
+        self.assertFalse(st["running"])
 
 
 if __name__ == "__main__":

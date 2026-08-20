@@ -376,6 +376,37 @@ hermes/
 
 ---
 
+## 🩺 Troubleshooting
+
+### `HTTP 404` from `http://127.0.0.1:8080/v1` (HTML error page)
+
+Hermes is reaching *something* on that port, but not the AGY bridge — an HTML 404
+means a web server (nginx, Apache, a site, another app) owns the port. Check who
+is listening and where the bridge stands:
+
+```bash
+hermes agy daemon status          # says "PORT IN USE by another service" on a conflict
+ss -tlnp | grep :8080             # or: lsof -i :8080
+curl -s http://127.0.0.1:8080/health   # the AGY bridge answers with JSON
+```
+
+Then either free the port, or move the bridge and repoint Hermes at it:
+
+```bash
+hermes agy daemon start --port 8090
+hermes agy setup --port 8090      # rewrites providers.agy-proxy.base_url
+hermes agy daemon status --port 8090
+```
+
+If nothing is listening at all, the daemon simply is not running — start it with
+`hermes agy daemon start` and check `~/.hermes/logs/agy_proxy.log` if it exits.
+
+### `hermes: error: argument command: invalid choice: 'agy'`
+
+The plugin is not enabled — see [Enabling the Plugin](#-enabling-the-plugin-hermes-agy).
+
+---
+
 ## 🧪 Running Tests
 
 Execute the test suite with:
