@@ -7,7 +7,7 @@ import time
 from typing import Any, Dict, Optional
 
 from agy_auth_adapter.auth import AGYAuthManager
-from agy_auth_adapter.provider import DEFAULT_MODELS, AGYModelProvider
+from agy_auth_adapter.provider import DEFAULT_MODELS, AGYAPIError, AGYModelProvider
 from agy_auth_adapter.utils import DEFAULT_PROXY_HOST, get_default_proxy_port
 
 logger = logging.getLogger("agy_auth_adapter.proxy")
@@ -114,6 +114,29 @@ class AGYProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
             else:
                 self._send_json(result)
+
+        except AGYAPIError as e:
+            logger.error(f"Antigravity API rejected the request ({e.status_code}): {e.body}")
+            message = str(e)
+            if e.is_auth_error:
+                message = (
+                    f"{message}\n\nThe stored Antigravity credential was rejected. "
+                    "Access tokens expire after about an hour and a token imported with "
+                    "'hermes agy login --token' carries no refresh token, so it has to be "
+                    "replaced: run 'hermes agy login --token <FRESH_TOKEN>' (or "
+                    "'hermes agy login' for the browser flow, which stores a refreshable "
+                    "session). Check the active credential with 'hermes agy status'."
+                )
+            self._send_json(
+                {
+                    "error": {
+                        "message": message,
+                        "type": "antigravity_auth_error" if e.is_auth_error else "antigravity_error",
+                        "code": e.status_code,
+                    }
+                },
+                status=e.status_code,
+            )
 
         except Exception as e:
             logger.error(f"Error handling chat completion: {e}", exc_info=True)

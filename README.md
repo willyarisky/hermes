@@ -328,7 +328,7 @@ hermes agy daemon restart
 | `hermes agy export-token` | Prints the active credentials JSON for transfer to another machine |
 | `hermes agy import-token '<TOKEN>'` | Same as `login --token`, kept for compatibility |
 | `hermes agy logout` | Clears stored session tokens from local profile and keyring |
-| `hermes agy status` | Displays active authentication details, token expiry, and daemon health |
+| `hermes agy status [--verify]` | Displays active authentication details, token expiry, and daemon health; `--verify` checks the credential against Google |
 | `hermes agy daemon start` | Starts proxy bridge as a detached background daemon |
 | `hermes agy daemon stop` | Terminates running background daemon and cleans up PID file |
 | `hermes agy daemon restart`| Restarts background daemon |
@@ -427,6 +427,32 @@ hermes agy daemon status --port 8090
 
 If nothing is listening at all, the daemon simply is not running — start it with
 `hermes agy daemon start` and check `~/.hermes/logs/agy_proxy.log` if it exits.
+
+### `401 Request had invalid authentication credentials` from the bridge
+
+The bridge reached Google, and Google rejected the stored credential. The proxy
+now passes this back as a `401` (not a generic `500`), and the message names the
+fix. Check the credential first:
+
+```bash
+hermes agy status --verify     # calls Google with the stored token
+```
+
+Common causes:
+
+* **The token expired.** Google access tokens last about an hour. A token stored
+  with `hermes agy login --token` has no refresh token attached, so it cannot be
+  renewed automatically — `hermes agy status` labels such a credential
+  `NO refresh token`. Fetch a fresh token and log in again, or use the browser
+  flow (`hermes agy login`), which stores a refreshable session.
+* **It is not an Antigravity token.** An AI Studio API key (`AIza…`) is routed to
+  `generativelanguage.googleapis.com` automatically, but an unrelated token
+  (a session cookie, a bearer for a different Google product) will be rejected.
+* **A stale credential elsewhere wins.** Resolution order is `ANTIGRAVITY_TOKEN` /
+  `AGY_AUTH_TOKEN` / `GEMINI_API_KEY` → `~/.hermes/.antigravity_oauth.json` →
+  `~/.gemini/antigravity-cli/` → system keyring. `hermes agy status` prints which
+  source won under `Auth Source`; unset a stale environment variable if it is
+  shadowing the credential you just stored.
 
 ### `hermes: error: argument command: invalid choice: 'agy'`
 

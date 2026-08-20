@@ -1,9 +1,11 @@
 """Tests for CLI handlers and HTTP Proxy in AGY Auth Adapter."""
 
+import io
 import json
 import os
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +17,8 @@ from agy_auth_adapter.utils import (
     get_configured_proxy_port,
     get_default_proxy_port,
 )
-from agy_auth_adapter.provider import AGYModelProvider
+from agy_auth_adapter.auth import AGYAuthManager, AuthCredentials
+from agy_auth_adapter.provider import AGYAPIError, AGYModelProvider, looks_like_api_key
 from agy_auth_adapter.proxy import AGYProxyHandler
 
 
@@ -202,6 +205,130 @@ class TestProxyPortResolution(unittest.TestCase):
             raise OSError
         with patch("socket.create_connection", side_effect=fake_connect):
             self.assertEqual(find_free_port(DEFAULT_PROXY_PORT), DEFAULT_PROXY_PORT + 2)
+
+
+class TestCredentialRouting(unittest.TestCase):
+    """An AI Studio API key must not be sent to cloudcode-pa as a Bearer token."""
+
+    def _provider_with_token(self, token, source):
+        mgr = MagicMock()
+        mgr.get_credentials.return_value = AuthCredentials(access_token=token, source=source)
+        mgr.get_auth_headers.return_value = {"Authorization": f"Bearer {token}"}
+        return AGYModelProvider(auth_manager=mgr)
+
+    def _captured_request(self, provider):
+        with patch("agy_auth_adapter.provider.urllib.request.urlopen") as urlopen:
+            urlopen.return_value.__enter__ = lambda s: s
+            urlopen.return_value.read.return_value = json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}
+            ).encode()
+            provider.chat_completion(
+                model="google-antigravity/gemini-3.7-flash",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            return urlopen.call_args[0][0]
+
+    def test_api_key_from_token_file_goes_to_generativelanguage(self):
+        provider = self._provider_with_token("AIzaSyFAKEKEYFAKEKEYFAKEKEY", "hermes_oauth_file")
+        req = self._captured_request(provider)
+        self.assertIn("generativelanguage.googleapis.com", req.full_url)
+        self.assertIn("key=AIzaSyFAKEKEYFAKEKEYFAKEKEY", req.full_url)
+        self.assertNotIn("Authorization", req.headers)
+
+    def test_oauth_token_goes_to_cloudcode(self):
+        provider = self._provider_with_token("ya29.a0-fake-oauth-token", "hermes_oauth_file")
+        req = self._captured_request(provider)
+        self.assertIn("cloudcode-pa.googleapis.com", req.full_url)
+
+    def test_looks_like_api_key(self):
+        self.assertTrue(looks_like_api_key("AIzaSyABC"))
+        self.assertFalse(looks_like_api_key("ya29.abc"))
+        self.assertFalse(looks_like_api_key(""))
+
+
+class TestUpstreamErrorPassthrough(unittest.TestCase):
+    """A rejected credential must surface as 401, not a generic 500."""
+
+    def test_api_error_carries_status_code(self):
+        err = AGYAPIError(401, '{"error": {"code": 401}}')
+        self.assertEqual(err.status_code, 401)
+        self.assertTrue(err.is_auth_error)
+        self.assertFalse(AGYAPIError(500, "boom").is_auth_error)
+
+    def test_provider_raises_api_error_with_upstream_status(self):
+        mgr = MagicMock()
+        mgr.get_credentials.return_value = AuthCredentials(
+            access_token="ya29.stale", source="hermes_oauth_file"
+        )
+        mgr.get_auth_headers.return_value = {"Authorization": "Bearer ya29.stale"}
+        provider = AGYModelProvider(auth_manager=mgr)
+
+        http_error = urllib.error.HTTPError(
+            url="https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=io.BytesIO(b'{"error": {"code": 401, "message": "Expected OAuth 2 access token"}}'),
+        )
+        with patch("agy_auth_adapter.provider.urllib.request.urlopen", side_effect=http_error):
+            with self.assertRaises(AGYAPIError) as ctx:
+                provider.chat_completion(
+                    model="google-antigravity/gemini-3.7-flash",
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertTrue(ctx.exception.is_auth_error)
+
+
+class TestCredentialVerification(unittest.TestCase):
+    """'hermes agy status --verify' catches a bad token before a chat does."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.mgr = AGYAuthManager(
+            hermes_home=Path(self.temp_dir.name) / ".hermes",
+            gemini_home=Path(self.temp_dir.name) / ".gemini",
+        )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_no_credential(self):
+        with patch.object(self.mgr, "get_credentials", return_value=None):
+            result = self.mgr.verify_credentials()
+        self.assertFalse(result["ok"])
+
+    def test_rejected_token_reports_the_status(self):
+        creds = AuthCredentials(access_token="ya29.stale", source="hermes_oauth_file")
+        http_error = urllib.error.HTTPError(
+            url="https://www.googleapis.com/oauth2/v3/userinfo",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=io.BytesIO(b'{"error": "invalid_request"}'),
+        )
+        with patch.object(self.mgr, "get_credentials", return_value=creds), patch(
+            "urllib.request.urlopen", side_effect=http_error
+        ):
+            result = self.mgr.verify_credentials()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], 401)
+
+    def test_scope_error_is_inconclusive_not_a_failure(self):
+        creds = AuthCredentials(access_token="ya29.scoped", source="hermes_oauth_file")
+        http_error = urllib.error.HTTPError(
+            url="https://www.googleapis.com/oauth2/v3/userinfo",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=io.BytesIO(b'{"error": "insufficient scope"}'),
+        )
+        with patch.object(self.mgr, "get_credentials", return_value=creds), patch(
+            "urllib.request.urlopen", side_effect=http_error
+        ):
+            result = self.mgr.verify_credentials()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], 403)
 
 
 if __name__ == "__main__":

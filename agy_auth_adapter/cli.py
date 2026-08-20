@@ -137,6 +137,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     daemon_mgr = DaemonManager()
 
     status = auth_mgr.get_status()
+    verification = auth_mgr.verify_credentials() if getattr(args, "verify", False) else None
     daemon_status = daemon_mgr.status()
 
     print("\n--- Antigravity (AGY) Authentication Status ---")
@@ -151,12 +152,25 @@ def cmd_status(args: argparse.Namespace) -> int:
         if status.get("expires_in_seconds") is not None:
             mins = status['expires_in_seconds'] // 60
             secs = status['expires_in_seconds'] % 60
-            print(f"Token Expiry:  In {mins}m {secs}s (Auto-refreshes)")
+            if status.get("refreshable"):
+                print(f"Token Expiry:  In {mins}m {secs}s (Auto-refreshes)")
+            else:
+                print(f"Token Expiry:  In {mins}m {secs}s (NO refresh token - re-login when it lapses)")
+        elif not status.get("refreshable"):
+            print(f"Token Expiry:  Unknown (imported token, no refresh token)")
     else:
         print(f"Status:        UNAUTHENTICATED")
         print(f"Message:       {status.get('message')}")
         print(f"Expected File: {status.get('token_file')}")
         print(f"\nTo authenticate, run: hermes agy login")
+
+    if verification is not None:
+        if verification["ok"]:
+            print(f"Live Check:    OK - {verification['detail']}")
+        else:
+            print(f"Live Check:    REJECTED by Google (HTTP {verification['status']})")
+            print(f"               {verification['detail']}")
+            print("               Re-authenticate: hermes agy login --token '<FRESH_TOKEN>'")
 
     print("\n--- AGY Background Daemon / Bridge Status ---")
     if daemon_status["running"]:
@@ -391,7 +405,12 @@ def add_agy_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentPar
     subparsers.add_parser("logout", help="Log out and clear stored AGY credentials")
 
     # status
-    subparsers.add_parser("status", help="Show AGY authentication, token, and daemon status")
+    status_parser = subparsers.add_parser("status", help="Show AGY authentication, token, and daemon status")
+    status_parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Also check the stored credential against Google (catches expired/invalid tokens)",
+    )
 
     # models
     subparsers.add_parser("models", help="List supported Antigravity models")

@@ -278,7 +278,55 @@ class AGYAuthManager:
             "token_file": str(self.token_file) if creds.source == "hermes_oauth_file" else None,
             "expires_in_seconds": time_left,
             "is_expired": creds.is_expired,
+            "refreshable": bool(creds.refresh_token),
         }
+
+    def verify_credentials(self, timeout: float = 10.0) -> Dict[str, Any]:
+        """Checks the stored credential against Google, without running a completion.
+
+        A token imported with 'login --token' is stored as-is, so the first sign
+        that it is wrong is usually a 401 in the middle of a chat. This makes that
+        check explicit. Returns a dict with 'ok', 'status', and 'detail'.
+        """
+        import urllib.error
+        import urllib.request
+
+        from agy_auth_adapter.provider import looks_like_api_key
+
+        creds = self.get_credentials()
+        if not creds or not creds.access_token:
+            return {"ok": False, "status": None, "detail": "No credential stored."}
+
+        if looks_like_api_key(creds.access_token):
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models"
+                f"?key={creds.access_token}"
+            )
+            req = urllib.request.Request(url, method="GET")
+        else:
+            req = urllib.request.Request(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {creds.access_token}"},
+                method="GET",
+            )
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return {"ok": True, "status": resp.status, "detail": "Credential accepted by Google."}
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="ignore")[:300]
+            if e.code == 403:
+                # Valid token, but not scoped for the endpoint we probed. That
+                # says nothing about whether Antigravity will accept it.
+                return {
+                    "ok": True,
+                    "status": 403,
+                    "detail": "Token accepted but lacks scope for this probe — inconclusive.",
+                }
+            return {"ok": False, "status": e.code, "detail": body}
+        except Exception as e:
+            return {"ok": False, "status": None, "detail": f"Could not reach Google: {e}"}
+
 
     # --- Internal Storage Helpers ---
 

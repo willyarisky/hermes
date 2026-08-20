@@ -28,6 +28,34 @@ DEFAULT_MODELS = {
 }
 
 
+class AGYAPIError(RuntimeError):
+    """Upstream Antigravity/Gemini API error, carrying the original status code.
+
+    The proxy re-uses ``status_code`` so callers see 401 for a rejected
+    credential instead of a generic 500 that hides what actually went wrong.
+    """
+
+    def __init__(self, status_code: int, body: str, url: str = ""):
+        self.status_code = status_code
+        self.body = body
+        self.url = url
+        super().__init__(f"Antigravity API Error ({status_code}): {body}")
+
+    @property
+    def is_auth_error(self) -> bool:
+        return self.status_code in (401, 403)
+
+
+def looks_like_api_key(token: str) -> bool:
+    """True for a Google AI Studio API key ('AIza...') rather than an OAuth token.
+
+    API keys must go to generativelanguage.googleapis.com as a ``key=`` query
+    parameter; sending one as a Bearer token to cloudcode-pa returns
+    "Expected OAuth 2 access token".
+    """
+    return bool(token) and token.startswith("AIza")
+
+
 class AGYModelProvider:
     """Bridges OpenAI-compatible Chat Completions from Hermes to Google Antigravity / Gemini."""
 
@@ -160,9 +188,11 @@ class AGYModelProvider:
         headers = self.auth_manager.get_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        # Determine endpoint based on auth method & model
+        # Determine endpoint based on the credential shape, not where it came
+        # from: an AI Studio API key is routed to generativelanguage regardless
+        # of whether it arrived via the environment, 'login --token', or a file.
         creds = self.auth_manager.get_credentials()
-        if creds and creds.source == "environment_variable" and creds.access_token.startswith("AIza"):
+        if creds and looks_like_api_key(creds.access_token):
             # Gemini API Key mode
             action = "streamGenerateContent?alt=sse" if stream else "generateContent"
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:{action}?key={creds.access_token}"
@@ -181,7 +211,7 @@ class AGYModelProvider:
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="ignore")
             logger.error(f"AGY completion error ({e.code}): {err_body}")
-            raise RuntimeError(f"Antigravity API Error ({e.code}): {err_body}") from e
+            raise AGYAPIError(e.code, err_body, url) from e
 
         if stream:
             return self._stream_response(resp, target_model)
