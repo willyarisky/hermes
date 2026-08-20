@@ -1,0 +1,26 @@
+# Example ~/.hermes/config.yaml for Hermes Agent with AGY Integration
+
+# 1. Model configuration
+model:
+  # Choose default Antigravity / Gemini model
+  default: google-antigravity/gemini-3.7-flash
+  # Point model requests to the AGY proxy or custom endpoint
+  provider: agy-proxy
+
+# 2. Custom Providers definition
+providers:
+  agy-proxy:
+    # URL where 'hermes agy proxy' runs
+    base_url: http://127.0.0.1:8080/v1
+    api_key: antigravity-local-auth
+
+# 3. Enabled Hermes Plugins
+plugins:
+  enabled:
+    - agy-auth-adapter
+
+# 4. Optional Dashboard Auth Settings
+dashboard:
+  auth:
+    default_provider: agy
+    allow_anonymous: false

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-agy-auth-adapter"
+version = "1.0.0"
+description = "Google Antigravity (AGY) Auth Adapter & Provider Plugin for Hermes Agent"
+readme = "README.md"
+authors = [{ name = "Antigravity Community" }]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "keyring>=24.0.0; extra == 'keyring'",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+keyring = ["keyring>=24.0.0"]
+test = ["pytest>=7.0.0"]
+
+[project.entry-points."hermes.plugins"]
+agy-auth-adapter = "agy_auth_adapter:register"
+
+[project.scripts]
+hermes-agy = "agy_auth_adapter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agy_auth_adapter*"]
