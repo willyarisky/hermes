@@ -19,7 +19,7 @@ dependencies = [
 keyring = ["keyring>=24.0.0"]
 test = ["pytest>=7.0.0"]
 
-[project.entry-points."hermes.plugins"]
+[project.entry-points."hermes_agent.plugins"]
 agy-auth-adapter = "agy_auth_adapter:register"
 
 [project.scripts]

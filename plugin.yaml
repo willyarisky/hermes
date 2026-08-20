@@ -1,6 +1,6 @@
 name: agy-auth-adapter
 version: 1.0.0
-kind: auth-provider
+kind: standalone
 description: Google Antigravity (AGY) Auth Adapter & Model Provider Plugin for Hermes Agent. Provides OAuth2 PKCE login, multi-source token management, dashboard auth gate integration, and OpenAI-compatible proxy/provider.
 author: Antigravity Community
 entrypoint: agy_auth_adapter:register

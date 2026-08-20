@@ -108,6 +108,18 @@ fi
 (cd "$PLUGIN_DIR" && PYTHONPATH="$PLUGIN_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     "$PY_CMD" -m agy_auth_adapter.cli setup --start-daemon)
 
+# 6. Work out which command form is available on this machine
+if command -v hermes > /dev/null 2>&1 && hermes agy --help > /dev/null 2>&1; then
+    AGY_CMD="hermes agy"
+else
+    AGY_CMD="python3 -m agy_auth_adapter.cli"
+    echo ""
+    echo "[!] 'hermes agy' is not available yet (the plugin must be enabled in"
+    echo "    ~/.hermes/config.yaml). Enable it with:"
+    echo "      hermes plugins enable agy-auth-adapter"
+    echo "    Until then, run the commands below from $PLUGIN_DIR."
+fi
+
 echo ""
 echo "================================================================="
 echo " Installation Complete!"
@@ -116,16 +128,16 @@ echo ""
 echo "Next step: Authenticate this server using ONE of these methods:"
 echo ""
 echo "Option A (Token login - recommended, no OAuth client needed):"
-echo "  hermes agy login --token '<ANTIGRAVITY_TOKEN>'"
-echo "  # or pipe it in:   echo '<TOKEN>' | hermes agy login --token -"
-echo "  # or from the env: ANTIGRAVITY_TOKEN='<TOKEN>' hermes agy login --token"
+echo "  $AGY_CMD login --token '<ANTIGRAVITY_TOKEN>'"
+echo "  # or pipe it in:   echo '<TOKEN>' | $AGY_CMD login --token -"
+echo "  # or from the env: ANTIGRAVITY_TOKEN='<TOKEN>' $AGY_CMD login --token"
 echo ""
 echo "Option B (Copy token from a machine that is already logged in):"
-echo "  That machine:   hermes agy export-token"
-echo "  This server:    hermes agy login --token '<PASTE_JSON_HERE>'"
+echo "  That machine:   $AGY_CMD export-token"
+echo "  This server:    $AGY_CMD login --token '<PASTE_JSON_HERE>'"
 echo ""
 echo "Option C (Browser OAuth - requires your own Google OAuth client):"
 echo "  export AGY_OAUTH_CLIENT_ID='<id>.apps.googleusercontent.com'"
 echo "  export AGY_OAUTH_CLIENT_SECRET='<secret>'"
-echo "  hermes agy login --headless"
+echo "  $AGY_CMD login --headless"
 echo ""

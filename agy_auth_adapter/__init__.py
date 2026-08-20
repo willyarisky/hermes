@@ -4,7 +4,12 @@ import logging
 from typing import Any
 
 from agy_auth_adapter.auth import AGYAuthManager, AuthCredentials
-from agy_auth_adapter.cli import build_parser, main as cli_main
+from agy_auth_adapter.cli import (
+    add_agy_subcommands,
+    build_parser,
+    dispatch as cli_dispatch,
+    main as cli_main,
+)
 from agy_auth_adapter.daemon import DaemonManager
 from agy_auth_adapter.dashboard_auth import AntigravityDashboardAuthProvider
 from agy_auth_adapter.provider import AGYModelProvider
@@ -12,6 +17,8 @@ from agy_auth_adapter.provider import AGYModelProvider
 __version__ = "1.0.0"
 __all__ = [
     "AGYAuthManager",
+    "add_agy_subcommands",
+    "cli_dispatch",
     "AuthCredentials",
     "DaemonManager",
     "AntigravityDashboardAuthProvider",
@@ -23,8 +30,8 @@ logger = logging.getLogger("agy_auth_adapter")
 
 
 def register(ctx: Any) -> None:
-    """Plugin registration hook invoked by Hermes Agent PluginManager.
-    
+    """Plugin registration hook invoked by the Hermes PluginManager.
+
     Args:
         ctx: The Hermes PluginContext instance.
     """
@@ -41,15 +48,32 @@ def register(ctx: Any) -> None:
         except Exception as e:
             logger.warning(f"Could not register DashboardAuthProvider: {e}")
 
-    # 2. Register CLI Command Group ('hermes agy ...')
+    # 2. Register the CLI command group ('hermes agy ...'). Hermes creates the
+    #    subparser and calls setup_fn to fill it, then dispatches to handler_fn.
     if hasattr(ctx, "register_cli_command"):
         try:
             ctx.register_cli_command(
                 name="agy",
-                handler=cli_main,
                 help="Google Antigravity (AGY) authentication, daemon, and proxy utilities",
+                setup_fn=add_agy_subcommands,
+                handler_fn=cli_dispatch,
+                description=(
+                    "Google Antigravity (AGY) authentication, background daemon, and "
+                    "OpenAI-compatible proxy utilities."
+                ),
             )
             logger.info("Registered 'hermes agy' CLI command group.")
+        except TypeError:
+            # Older/alternative PluginContext signature: (name, handler, help)
+            try:
+                ctx.register_cli_command(
+                    name="agy",
+                    handler=cli_main,
+                    help="Google Antigravity (AGY) authentication, daemon, and proxy utilities",
+                )
+                logger.info("Registered 'hermes agy' CLI command group (legacy signature).")
+            except Exception as e:
+                logger.warning(f"Could not register CLI command: {e}")
         except Exception as e:
             logger.warning(f"Could not register CLI command: {e}")
 

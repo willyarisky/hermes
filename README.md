@@ -67,6 +67,41 @@ pip install -e .
 
 ---
 
+## 🔌 Enabling the Plugin (`hermes agy`)
+
+Hermes plugins are **opt-in**: the `hermes agy` subcommand only exists once
+`agy-auth-adapter` is listed under `plugins.enabled` in `~/.hermes/config.yaml`.
+The installers do this for you; to do it by hand from the plugin directory:
+
+```bash
+cd ~/.hermes/plugins/agy-auth-adapter
+python3 -m agy_auth_adapter.cli setup     # writes config.yaml + enables the plugin
+# or, using Hermes' own plugin manager:
+hermes plugins enable agy-auth-adapter
+```
+
+Verify with:
+
+```bash
+hermes plugins list | grep agy      # should read "enabled"
+hermes agy status
+```
+
+**`hermes: error: argument command: invalid choice: 'agy'`** means the plugin is
+not enabled (or not installed where Hermes looks). Until it is, every command
+also works directly:
+
+```bash
+cd ~/.hermes/plugins/agy-auth-adapter
+python3 -m agy_auth_adapter.cli login --token '<ANTIGRAVITY_TOKEN>'
+python3 -m agy_auth_adapter.cli status
+```
+
+Run `HERMES_PLUGINS_DEBUG=1 hermes agy status` to see Hermes' plugin discovery log
+if it still does not appear.
+
+---
+
 ## 🔑 Logging In
 
 ### Token Login (Recommended — no OAuth client required)
@@ -318,6 +353,7 @@ hermes agy daemon restart
 
 ```
 hermes/
+├── __init__.py                    # Hermes directory-plugin entry point (re-exports register)
 ├── plugin.yaml                    # Hermes Agent plugin manifest
 ├── pyproject.toml                 # Package setup and entrypoints
 ├── requirements.txt               # Dependencies

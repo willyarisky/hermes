@@ -9,8 +9,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import agy_auth_adapter
 from agy_auth_adapter.auth import AGYAuthManager, AuthCredentials
-from agy_auth_adapter.cli import cmd_login
+from agy_auth_adapter.cli import build_parser, cmd_login, dispatch
 from agy_auth_adapter.dashboard_auth import AntigravityDashboardAuthProvider
 from agy_auth_adapter.oauth import create_auth_url, generate_pkce_pair
 from agy_auth_adapter.provider import AGYModelProvider
@@ -179,6 +180,62 @@ class TestTokenLogin(unittest.TestCase):
         ):
             self.assertEqual(self._login(""), 1)
         self.assertFalse((self.hermes_home / ".antigravity_oauth.json").exists())
+
+
+class TestPluginRegistration(unittest.TestCase):
+    """The plugin must match the Hermes PluginContext contract for 'hermes agy'."""
+
+    class FakeContext:
+        """Minimal stand-in for hermes_cli.plugins.PluginContext."""
+
+        def __init__(self):
+            self.cli_commands = {}
+            self.dashboard_providers = []
+
+        def register_cli_command(self, name, help, setup_fn, handler_fn=None, description=""):
+            self.cli_commands[name] = {
+                "help": help,
+                "setup_fn": setup_fn,
+                "handler_fn": handler_fn,
+                "description": description,
+            }
+
+        def register_dashboard_auth_provider(self, provider):
+            self.dashboard_providers.append(provider)
+
+    def test_register_installs_agy_cli_command(self):
+        ctx = self.FakeContext()
+        agy_auth_adapter.register(ctx)
+        self.assertIn("agy", ctx.cli_commands)
+        self.assertEqual(len(ctx.dashboard_providers), 1)
+
+    def test_registered_setup_fn_builds_a_working_subparser(self):
+        """Mirrors what hermes_cli/main.py does with a plugin CLI command."""
+        ctx = self.FakeContext()
+        agy_auth_adapter.register(ctx)
+        cmd = ctx.cli_commands["agy"]
+
+        root = argparse.ArgumentParser(prog="hermes")
+        subparsers = root.add_subparsers(dest="command")
+        agy_parser = subparsers.add_parser("agy", help=cmd["help"])
+        cmd["setup_fn"](agy_parser)
+        agy_parser.set_defaults(func=cmd["handler_fn"])
+
+        args = root.parse_args(["agy", "status"])
+        self.assertEqual(args.command, "agy")
+        self.assertEqual(args.agy_command, "status")
+
+        status = MagicMock(return_value=0)
+        with patch.dict("agy_auth_adapter.cli.COMMANDS", {"status": status}):
+            self.assertEqual(args.func(args), 0)
+        status.assert_called_once_with(args)
+
+    def test_dispatch_without_subcommand_prints_help(self):
+        parser = build_parser()
+        parsed = parser.parse_args([])
+        with patch.object(parsed._agy_parser, "print_help") as print_help:
+            self.assertEqual(dispatch(parsed), 0)
+        print_help.assert_called_once()
 
 
 class TestDashboardAuth(unittest.TestCase):

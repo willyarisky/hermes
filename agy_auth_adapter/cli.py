@@ -307,13 +307,14 @@ plugins:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Builds CLI argument parser for AGY subcommands."""
-    parser = argparse.ArgumentParser(
-        prog="hermes agy",
-        description="Google Antigravity (AGY) Auth Adapter & Provider CLI for Hermes Agent.",
-    )
-    subparsers = parser.add_subparsers(dest="command", help="AGY command to execute")
+def add_agy_subcommands(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    """Attaches the AGY subcommands to *parser*.
+
+    Used both by the standalone CLI and by the Hermes plugin hook, which hands
+    us the argparse subparser it created for 'hermes agy'.
+    """
+    parser.set_defaults(_agy_parser=parser)
+    subparsers = parser.add_subparsers(dest="agy_command", help="AGY command to execute")
 
     # login
     login_parser = subparsers.add_parser(
@@ -395,33 +396,49 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Builds the standalone CLI argument parser for AGY subcommands."""
+    parser = argparse.ArgumentParser(
+        prog="hermes agy",
+        description="Google Antigravity (AGY) Auth Adapter & Provider CLI for Hermes Agent.",
+    )
+    return add_agy_subcommands(parser)
+
+
+COMMANDS = {
+    "login": cmd_login,
+    "export-token": cmd_export_token,
+    "import-token": cmd_import_token,
+    "logout": cmd_logout,
+    "status": cmd_status,
+    "models": cmd_models,
+    "proxy": cmd_proxy,
+    "daemon": cmd_daemon,
+    "setup": cmd_setup,
+}
+
+
+def dispatch(parsed: argparse.Namespace) -> int:
+    """Runs the handler for an already-parsed AGY namespace.
+
+    This is the entry point Hermes calls for 'hermes agy ...' (registered as the
+    subcommand's handler_fn), and what the standalone CLI uses after parsing.
+    """
+    command = getattr(parsed, "agy_command", None) or getattr(parsed, "command", None)
+    handler = COMMANDS.get(command)
+    if handler is None:
+        parser = getattr(parsed, "_agy_parser", None)
+        if parser is not None:
+            parser.print_help()
+        return 0 if command is None else 1
+    return handler(parsed)
+
+
 def main(args: Optional[List[str]] = None) -> int:
     """Main CLI entrypoint."""
     parser = build_parser()
     parsed = parser.parse_args(args)
-
-    if not parsed.command:
-        parser.print_help()
-        return 0
-
-    commands = {
-        "login": cmd_login,
-        "export-token": cmd_export_token,
-        "import-token": cmd_import_token,
-        "logout": cmd_logout,
-        "status": cmd_status,
-        "models": cmd_models,
-        "proxy": cmd_proxy,
-        "daemon": cmd_daemon,
-        "setup": cmd_setup,
-    }
-
-    handler = commands.get(parsed.command)
-    if handler:
-        return handler(parsed)
-    else:
-        parser.print_help()
-        return 1
+    return dispatch(parsed)
 
 
 if __name__ == "__main__":

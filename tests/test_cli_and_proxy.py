@@ -18,18 +18,18 @@ class TestCLI(unittest.TestCase):
 
     def test_parser_subcommands(self):
         args = self.parser.parse_args(["login", "--no-keychain", "--port", "9000"])
-        self.assertEqual(args.command, "login")
+        self.assertEqual(args.agy_command, "login")
         self.assertTrue(args.no_keychain)
         self.assertEqual(args.port, 9000)
 
         args_status = self.parser.parse_args(["status"])
-        self.assertEqual(args_status.command, "status")
+        self.assertEqual(args_status.agy_command, "status")
 
         args_models = self.parser.parse_args(["models"])
-        self.assertEqual(args_models.command, "models")
+        self.assertEqual(args_models.agy_command, "models")
 
         args_proxy = self.parser.parse_args(["proxy", "--port", "8081"])
-        self.assertEqual(args_proxy.command, "proxy")
+        self.assertEqual(args_proxy.agy_command, "proxy")
         self.assertEqual(args_proxy.port, 8081)
 
     @patch("agy_auth_adapter.cli.AGYAuthManager")

@@ -97,6 +97,21 @@ finally {
     Pop-Location
 }
 
+# 6. Work out which command form is available on this machine
+$AgyCmd = "python -m agy_auth_adapter.cli"
+if (Get-Command hermes -ErrorAction SilentlyContinue) {
+    $null = & hermes agy --help 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $AgyCmd = "hermes agy"
+    } else {
+        Write-Host ""
+        Write-Host "[!] 'hermes agy' is not available yet (the plugin must be enabled in" -ForegroundColor Yellow
+        Write-Host "    ~/.hermes/config.yaml). Enable it with:" -ForegroundColor Yellow
+        Write-Host "      hermes plugins enable agy-auth-adapter" -ForegroundColor Yellow
+        Write-Host "    Until then, run the commands below from $PluginDir." -ForegroundColor Yellow
+    }
+}
+
 Write-Host ""
 Write-Host "=================================================================" -ForegroundColor Green
 Write-Host " Installation Complete!" -ForegroundColor Green
@@ -105,15 +120,15 @@ Write-Host ""
 Write-Host "Next step: Authenticate using ONE of these methods:"
 Write-Host ""
 Write-Host "Option A (Token login - recommended, no OAuth client needed):"
-Write-Host "  python -m agy_auth_adapter.cli login --token '<ANTIGRAVITY_TOKEN>'"
-Write-Host "  # or from the env: `$env:ANTIGRAVITY_TOKEN='<TOKEN>'; python -m agy_auth_adapter.cli login --token"
+Write-Host "  $AgyCmd login --token '<ANTIGRAVITY_TOKEN>'"
+Write-Host "  # or from the env: `$env:ANTIGRAVITY_TOKEN='<TOKEN>'; $AgyCmd login --token"
 Write-Host ""
 Write-Host "Option B (Copy token from a machine that is already logged in):"
-Write-Host "  That machine: python -m agy_auth_adapter.cli export-token"
-Write-Host "  This machine: python -m agy_auth_adapter.cli login --token '<PASTE_JSON_HERE>'"
+Write-Host "  That machine: $AgyCmd export-token"
+Write-Host "  This machine: $AgyCmd login --token '<PASTE_JSON_HERE>'"
 Write-Host ""
 Write-Host "Option C (Browser OAuth - requires your own Google OAuth client):"
 Write-Host "  `$env:AGY_OAUTH_CLIENT_ID='<id>.apps.googleusercontent.com'"
 Write-Host "  `$env:AGY_OAUTH_CLIENT_SECRET='<secret>'"
-Write-Host "  python -m agy_auth_adapter.cli login --headless"
+Write-Host "  $AgyCmd login --headless"
 Write-Host ""
